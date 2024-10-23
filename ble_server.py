@@ -17,6 +17,9 @@ else:
 from service_definitions import ServiceDefinitions, CharacteristicProperties
 
 class GattCharacteristic(dbus.service.Object if not "REPL_ID" in os.environ else object):
+    """
+    GATT characteristic implementation with proper D-Bus method signatures.
+    """
     def __init__(self, bus, path, characteristic_config):
         if not "REPL_ID" in os.environ:
             dbus.service.Object.__init__(self, bus, path)
@@ -30,19 +33,24 @@ class GattCharacteristic(dbus.service.Object if not "REPL_ID" in os.environ else
     def path(self):
         return self._path
 
-    @dbus.service.method("org.bluez.GattCharacteristic1",
-                        in_signature='', out_signature='ay')
-    def ReadValue(self):
+    @dbus.service.method(dbus_interface='org.bluez.GattCharacteristic1',
+                        in_signature='a{sv}', out_signature='ay')
+    def ReadValue(self, options):
+        """Read characteristic value with proper D-Bus signature."""
         logger.info(f"Reading value from characteristic {self._uuid}")
-        return self._value
+        return dbus.Array(self._value, signature='y')
 
-    @dbus.service.method("org.bluez.GattCharacteristic1",
-                        in_signature='ay', out_signature='')
-    def WriteValue(self, value):
+    @dbus.service.method(dbus_interface='org.bluez.GattCharacteristic1',
+                        in_signature='aya{sv}', out_signature='')
+    def WriteValue(self, value, options):
+        """Write characteristic value with proper D-Bus signature."""
         logger.info(f"Writing value to characteristic {self._uuid}")
         self._value = bytes(value)
 
 class GattService(dbus.service.Object if not "REPL_ID" in os.environ else object):
+    """
+    GATT service implementation with proper D-Bus interface.
+    """
     def __init__(self, bus, path):
         if not "REPL_ID" in os.environ:
             dbus.service.Object.__init__(self, bus, path)
@@ -68,9 +76,11 @@ class BLEGattServer:
         self.service = None
         self.characteristics = {}
         self.is_development = "REPL_ID" in os.environ
+        self.adapter_interface = 'org.bluez.Adapter1'
+        self.adapter_path = '/org/bluez/hci0'
 
     def setup_dbus(self):
-        """Setup D-Bus connection and get BlueZ interface."""
+        """Setup D-Bus connection and get BlueZ interface with proper method signatures."""
         try:
             if self.is_development:
                 self.bus = MockMessageBus()
@@ -79,10 +89,9 @@ class BLEGattServer:
             else:
                 dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
                 self.bus = dbus.SystemBus()
-                self.adapter = dbus.Interface(
-                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
-                    'org.bluez.Adapter1'
-                )
+                adapter_obj = self.bus.get_object('org.bluez', self.adapter_path)
+                self.adapter = dbus.Interface(adapter_obj, self.adapter_interface)
+                self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
                 logger.info("D-Bus setup completed successfully")
         except Exception as e:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
@@ -113,16 +122,16 @@ class BLEGattServer:
             raise
 
     def start_advertising(self):
-        """Start BLE advertising."""
+        """Start BLE advertising with proper D-Bus property handling."""
         try:
             if not self.is_development:
-                # Power on adapter
-                self.adapter.Set('org.bluez.Adapter1', 'Powered', True)
+                # Power on adapter using proper D-Bus property interface
+                self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(True))
                 logger.info("Bluetooth adapter powered on")
 
                 # Set discoverable and pairable properties
-                self.adapter.Set('org.bluez.Adapter1', 'Discoverable', True)
-                self.adapter.Set('org.bluez.Adapter1', 'Pairable', True)
+                self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(True))
+                self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(True))
 
             # Register service and characteristics
             self.register_service()
@@ -138,8 +147,8 @@ class BLEGattServer:
         finally:
             if self.adapter and not self.is_development:
                 try:
-                    self.adapter.Set('org.bluez.Adapter1', 'Discoverable', False)
-                    self.adapter.Set('org.bluez.Adapter1', 'Pairable', False)
+                    self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
+                    self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(False))
                 except:
                     pass
             logger.info("GATT server stopped")
