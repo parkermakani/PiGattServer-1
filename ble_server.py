@@ -6,6 +6,7 @@ import dbus
 import dbus.service
 import dbus.mainloop.glib
 from gi.repository import GLib
+import time
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -78,6 +79,68 @@ class BLEGattServer:
         self.is_development = "REPL_ID" in os.environ
         self.adapter_interface = 'org.bluez.Adapter1'
         self.adapter_path = '/org/bluez/hci0'
+        self._cleanup_required = False
+
+    def reset_adapter(self):
+        """Reset the Bluetooth adapter."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating adapter reset")
+                return True
+
+            if not self.adapter or not self.adapter_props:
+                logger.error("Adapter not initialized")
+                return False
+
+            # Power cycle the adapter
+            logger.info("Resetting Bluetooth adapter...")
+            self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(False))
+            time.sleep(1)  # Wait for adapter to power down
+            self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(True))
+            time.sleep(1)  # Wait for adapter to power up
+
+            # Reset discoverable and pairable states
+            self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
+            self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(False))
+
+            logger.info("Bluetooth adapter reset successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to reset adapter: {str(e)}")
+            return False
+
+    def cleanup(self):
+        """Perform cleanup operations."""
+        try:
+            if not self.is_development and self._cleanup_required:
+                logger.info("Performing adapter cleanup...")
+                
+                if self.adapter and self.adapter_props:
+                    # Disable advertising
+                    try:
+                        self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
+                        self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(False))
+                    except Exception as e:
+                        logger.warning(f"Error disabling advertising: {str(e)}")
+
+                    # Power down adapter
+                    try:
+                        self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(False))
+                    except Exception as e:
+                        logger.warning(f"Error powering down adapter: {str(e)}")
+
+                # Clear characteristics
+                self.characteristics.clear()
+                
+                logger.info("Cleanup completed successfully")
+            else:
+                logger.info("Development mode: Skipping cleanup")
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+        finally:
+            self._cleanup_required = False
 
     def setup_dbus(self):
         """Setup D-Bus connection and get BlueZ interface with proper method signatures."""
@@ -92,6 +155,11 @@ class BLEGattServer:
                 adapter_obj = self.bus.get_object('org.bluez', self.adapter_path)
                 self.adapter = dbus.Interface(adapter_obj, self.adapter_interface)
                 self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
+                
+                # Reset adapter on startup
+                if not self.reset_adapter():
+                    raise Exception("Failed to reset adapter during setup")
+                    
                 logger.info("D-Bus setup completed successfully")
         except Exception as e:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
@@ -117,6 +185,7 @@ class BLEGattServer:
                 logger.info(f"Registered characteristic: {name} at {path}")
 
             logger.info("Service and characteristics registered successfully")
+            self._cleanup_required = True
         except Exception as e:
             logger.error(f"Failed to register service: {str(e)}")
             raise
@@ -145,12 +214,7 @@ class BLEGattServer:
             logger.error(f"Error in GATT server: {str(e)}")
             raise
         finally:
-            if self.adapter and not self.is_development:
-                try:
-                    self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
-                    self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(False))
-                except:
-                    pass
+            self.cleanup()
             logger.info("GATT server stopped")
 
     def update_characteristic(self, name, value):
@@ -178,6 +242,9 @@ def main():
             server.mainloop.quit()
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
+    finally:
+        if server:
+            server.cleanup()
 
 if __name__ == "__main__":
     main()
