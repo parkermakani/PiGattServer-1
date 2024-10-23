@@ -7,6 +7,8 @@ import dbus.service
 import dbus.mainloop.glib
 from gi.repository import GLib
 import time
+import threading
+from functools import wraps
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -17,10 +19,27 @@ else:
 
 from service_definitions import ServiceDefinitions, CharacteristicProperties
 
+def retry_on_failure(max_retries=3, delay=1):
+    """Decorator for retrying operations with exponential backoff."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    wait_time = delay * (2 ** attempt)
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+                    logger.info(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+            raise last_exception
+        return wrapper
+    return decorator
+
 class GattCharacteristic(dbus.service.Object if not "REPL_ID" in os.environ else object):
-    """
-    GATT characteristic implementation with proper D-Bus method signatures.
-    """
+    """GATT characteristic implementation with proper D-Bus method signatures."""
     def __init__(self, bus, path, characteristic_config):
         if not "REPL_ID" in os.environ:
             dbus.service.Object.__init__(self, bus, path)
@@ -49,9 +68,7 @@ class GattCharacteristic(dbus.service.Object if not "REPL_ID" in os.environ else
         self._value = bytes(value)
 
 class GattService(dbus.service.Object if not "REPL_ID" in os.environ else object):
-    """
-    GATT service implementation with proper D-Bus interface.
-    """
+    """GATT service implementation with proper D-Bus interface."""
     def __init__(self, bus, path):
         if not "REPL_ID" in os.environ:
             dbus.service.Object.__init__(self, bus, path)
@@ -80,9 +97,12 @@ class BLEGattServer:
         self.adapter_interface = 'org.bluez.Adapter1'
         self.adapter_path = '/org/bluez/hci0'
         self._cleanup_required = False
+        self._shutdown_event = threading.Event()
+        self._shutdown_timeout = 10  # seconds
 
+    @retry_on_failure(max_retries=3, delay=1)
     def reset_adapter(self):
-        """Reset the Bluetooth adapter."""
+        """Reset the Bluetooth adapter with retry mechanism."""
         try:
             if self.is_development:
                 logger.info("Development mode: Simulating adapter reset")
@@ -92,12 +112,29 @@ class BLEGattServer:
                 logger.error("Adapter not initialized")
                 return False
 
+            # Try to release the adapter if it's busy
+            try:
+                self.adapter.RemoveDevice('/')  # Try to remove all devices
+            except:
+                pass  # Ignore errors during device removal
+
             # Power cycle the adapter
             logger.info("Resetting Bluetooth adapter...")
             self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(False))
             time.sleep(1)  # Wait for adapter to power down
+
+            # Check if adapter is truly powered off
+            powered = self.adapter_props.Get(self.adapter_interface, 'Powered')
+            if powered:
+                raise Exception("Failed to power down adapter")
+
             self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(True))
             time.sleep(1)  # Wait for adapter to power up
+
+            # Verify adapter is powered on
+            powered = self.adapter_props.Get(self.adapter_interface, 'Powered')
+            if not powered:
+                raise Exception("Failed to power up adapter")
 
             # Reset discoverable and pairable states
             self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
@@ -108,27 +145,53 @@ class BLEGattServer:
 
         except Exception as e:
             logger.error(f"Failed to reset adapter: {str(e)}")
-            return False
+            raise
+
+    def graceful_shutdown(self):
+        """Initiate graceful shutdown with timeout."""
+        logger.info("Initiating graceful shutdown...")
+        self._shutdown_event.set()
+        
+        if self.mainloop:
+            def shutdown_timeout():
+                if self.mainloop:
+                    logger.warning("Shutdown timeout reached, forcing exit...")
+                    self.mainloop.quit()
+            
+            # Start timeout thread
+            timeout_thread = threading.Timer(self._shutdown_timeout, shutdown_timeout)
+            timeout_thread.start()
+            
+            try:
+                # Perform cleanup while mainloop is still running
+                self.cleanup()
+            finally:
+                timeout_thread.cancel()
+                self.mainloop.quit()
 
     def cleanup(self):
-        """Perform cleanup operations."""
+        """Perform cleanup operations with enhanced error handling."""
         try:
             if not self.is_development and self._cleanup_required:
                 logger.info("Performing adapter cleanup...")
                 
                 if self.adapter and self.adapter_props:
-                    # Disable advertising
-                    try:
-                        self.adapter_props.Set(self.adapter_interface, 'Discoverable', dbus.Boolean(False))
-                        self.adapter_props.Set(self.adapter_interface, 'Pairable', dbus.Boolean(False))
-                    except Exception as e:
-                        logger.warning(f"Error disabling advertising: {str(e)}")
+                    cleanup_steps = [
+                        ('Disable advertising', lambda: self.adapter_props.Set(
+                            self.adapter_interface, 'Discoverable', dbus.Boolean(False))),
+                        ('Disable pairing', lambda: self.adapter_props.Set(
+                            self.adapter_interface, 'Pairable', dbus.Boolean(False))),
+                        ('Power down adapter', lambda: self.adapter_props.Set(
+                            self.adapter_interface, 'Powered', dbus.Boolean(False)))
+                    ]
 
-                    # Power down adapter
-                    try:
-                        self.adapter_props.Set(self.adapter_interface, 'Powered', dbus.Boolean(False))
-                    except Exception as e:
-                        logger.warning(f"Error powering down adapter: {str(e)}")
+                    for step_name, step_func in cleanup_steps:
+                        try:
+                            step_func()
+                            logger.info(f"{step_name} completed successfully")
+                        except Exception as e:
+                            logger.warning(f"Error during {step_name.lower()}: {str(e)}")
+                            # Continue with next step even if current step fails
 
                 # Clear characteristics
                 self.characteristics.clear()
@@ -142,8 +205,9 @@ class BLEGattServer:
         finally:
             self._cleanup_required = False
 
+    @retry_on_failure(max_retries=3, delay=1)
     def setup_dbus(self):
-        """Setup D-Bus connection and get BlueZ interface with proper method signatures."""
+        """Setup D-Bus connection with retry mechanism."""
         try:
             if self.is_development:
                 self.bus = MockMessageBus()
@@ -156,7 +220,7 @@ class BLEGattServer:
                 self.adapter = dbus.Interface(adapter_obj, self.adapter_interface)
                 self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
                 
-                # Reset adapter on startup
+                # Reset adapter on startup with retry
                 if not self.reset_adapter():
                     raise Exception("Failed to reset adapter during setup")
                     
@@ -190,8 +254,9 @@ class BLEGattServer:
             logger.error(f"Failed to register service: {str(e)}")
             raise
 
+    @retry_on_failure(max_retries=3, delay=1)
     def start_advertising(self):
-        """Start BLE advertising with proper D-Bus property handling."""
+        """Start BLE advertising with retry mechanism."""
         try:
             if not self.is_development:
                 # Power on adapter using proper D-Bus property interface
@@ -206,8 +271,17 @@ class BLEGattServer:
             self.register_service()
             logger.info("Started advertising GATT service")
 
-            # Start the main loop
+            # Start the main loop with shutdown handling
             self.mainloop = GLib.MainLoop()
+            
+            def check_shutdown():
+                if self._shutdown_event.is_set():
+                    self.mainloop.quit()
+                    return False
+                return True
+            
+            # Add periodic shutdown check
+            GLib.timeout_add(1000, check_shutdown)
             self.mainloop.run()
 
         except Exception as e:
@@ -238,13 +312,11 @@ def main():
         server.start_advertising()
     except KeyboardInterrupt:
         logger.info("Server shutdown requested")
-        if server.mainloop:
-            server.mainloop.quit()
+        server.graceful_shutdown()
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-    finally:
         if server:
-            server.cleanup()
+            server.graceful_shutdown()
 
 if __name__ == "__main__":
     main()
