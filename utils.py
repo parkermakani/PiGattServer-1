@@ -2,6 +2,7 @@ import platform
 import subprocess
 import os
 from logger_config import logger
+from setup_bluetooth import setup_bluetooth_permissions
 
 def check_bluetooth_status():
     """Check if Bluetooth is available and enabled."""
@@ -16,6 +17,11 @@ def check_bluetooth_status():
             logger.info("Running in Replit environment - Bluetooth checks are simulated")
             logger.info("Note: Full Bluetooth functionality requires Raspberry Pi hardware")
             return True
+            
+        # Setup Bluetooth permissions and configuration
+        if not setup_bluetooth_permissions():
+            logger.error("Failed to setup Bluetooth permissions")
+            return False
             
         # On actual Raspberry Pi, check if Bluetooth service is running
         result = subprocess.run(['systemctl', 'is-active', 'bluetooth'], 
