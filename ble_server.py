@@ -9,6 +9,7 @@ from gi.repository import GLib
 import time
 import threading
 from functools import wraps
+import json
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -99,6 +100,61 @@ class BLEGattServer:
         self._cleanup_required = False
         self._shutdown_event = threading.Event()
         self._shutdown_timeout = 10  # seconds
+        self._status_update_interval = 1  # Update status every second
+
+    def get_bluetooth_status(self):
+        """Get current Bluetooth adapter status."""
+        try:
+            if self.is_development:
+                return {
+                    "status": "active",
+                    "powered": True,
+                    "discovering": True,
+                    "address": "00:00:00:00:00:00",
+                    "name": "Mock Bluetooth Adapter"
+                }
+
+            status = {
+                "status": "inactive",
+                "powered": False,
+                "discovering": False,
+                "address": "",
+                "name": ""
+            }
+
+            if self.adapter and self.adapter_props:
+                status["powered"] = bool(self.adapter_props.Get(self.adapter_interface, 'Powered'))
+                status["discovering"] = bool(self.adapter_props.Get(self.adapter_interface, 'Discovering'))
+                status["address"] = str(self.adapter_props.Get(self.adapter_interface, 'Address'))
+                status["name"] = str(self.adapter_props.Get(self.adapter_interface, 'Name'))
+                status["status"] = "active" if status["powered"] else "inactive"
+
+            return status
+        except Exception as e:
+            logger.error(f"Error getting Bluetooth status: {str(e)}")
+            return {"status": "error", "error": str(e)}
+
+    def update_status_characteristic(self):
+        """Update the status characteristic with current Bluetooth status."""
+        try:
+            status = self.get_bluetooth_status()
+            status_json = json.dumps(status).encode('utf-8')
+            self.update_characteristic('status', status_json)
+            return True
+        except Exception as e:
+            logger.error(f"Error updating status characteristic: {str(e)}")
+            return False
+
+    def start_status_updates(self):
+        """Start periodic status updates."""
+        def update_loop():
+            while not self._shutdown_event.is_set():
+                self.update_status_characteristic()
+                time.sleep(self._status_update_interval)
+
+        status_thread = threading.Thread(target=update_loop)
+        status_thread.daemon = True
+        status_thread.start()
 
     @retry_on_failure(max_retries=3, delay=1)
     def reset_adapter(self):
@@ -269,6 +325,11 @@ class BLEGattServer:
 
             # Register service and characteristics
             self.register_service()
+            
+            # Start status updates
+            self.start_status_updates()
+            logger.info("Started Bluetooth status monitoring")
+            
             logger.info("Started advertising GATT service")
 
             # Start the main loop with shutdown handling

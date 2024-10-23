@@ -24,7 +24,7 @@ agentRequireRestartOnSave = false
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "/nix/store/$(ls -t /nix/store | grep python3-3.11 | head -n1)/bin/python3 ble_server.py"
+args = "python3 ble_server.py"
 
 [deployment]
-run = ["sh", "-c", "/nix/store/$(ls -t /nix/store | grep python3-3.11 | head -n1)/bin/python3 ble_server.py"]
+run = ["sh", "-c", "python3 ble_server.py"]
