@@ -1,5 +1,6 @@
 import platform
 import subprocess
+import os
 from logger_config import logger
 
 def check_bluetooth_status():
@@ -9,7 +10,14 @@ def check_bluetooth_status():
             logger.error("This application is designed to run on Linux/Raspberry Pi")
             return False
             
-        # Check if Bluetooth service is running
+        # Check if we're running on Replit (development environment)
+        is_replit = "REPL_ID" in os.environ
+        if is_replit:
+            logger.info("Running in Replit environment - Bluetooth checks are simulated")
+            logger.info("Note: Full Bluetooth functionality requires Raspberry Pi hardware")
+            return True
+            
+        # On actual Raspberry Pi, check if Bluetooth service is running
         result = subprocess.run(['systemctl', 'is-active', 'bluetooth'], 
                               capture_output=True, text=True)
         
@@ -20,6 +28,9 @@ def check_bluetooth_status():
         return True
         
     except Exception as e:
+        if "REPL_ID" in os.environ:
+            logger.info("Development environment detected - proceeding with simulated Bluetooth")
+            return True
         logger.error(f"Error checking Bluetooth status: {str(e)}")
         return False
 
