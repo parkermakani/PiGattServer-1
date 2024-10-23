@@ -1,0 +1,9 @@
+[project]
+name = "repl-nix-pigattserver-1"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "bleak>=0.22.3",
+    "dbus-next>=0.2.3",
+]
