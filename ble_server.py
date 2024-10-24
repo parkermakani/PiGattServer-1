@@ -245,14 +245,14 @@ class BLEGATTServer:
             try:
                 # Initialize GattManager1 and LEAdvertisingManager1 interfaces
                 if adapter_obj is None:
-                    raise ValueError("adapter_obj is None, cannot proceed with interface initialization")
+                    logger.error("adapter_obj is None, cannot proceed with interface initialization")
                 logger.info("Initializing GattManager1 interface...")
                 self.gatt_manager = dbus.Interface(
                     adapter_obj,
                     'org.bluez.GattManager1'
                 )
                 if self.gatt_manager is None:
-                    raise RuntimeError("Failed to retrieve GattManager1 interface")
+                    logger.error("Failed to retrieve GattManager1 interface")
 
                 logger.info("GattManager1 interface initialized successfully")
             except Exception as e:
