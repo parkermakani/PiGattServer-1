@@ -242,11 +242,22 @@ class BLEGATTServer:
             self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
             self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
             
-            # Initialize GattManager1 and LEAdvertisingManager1 interfaces
-            self.gatt_manager = dbus.Interface(
-                adapter_obj,
-                'org.bluez.GattManager1'
-            )
+            try:
+                # Initialize GattManager1 and LEAdvertisingManager1 interfaces
+                if adapter_obj is None:
+                    raise ValueError("adapter_obj is None, cannot proceed with interface initialization")
+                logger.info("Initializing GattManager1 interface...")
+                self.gatt_manager = dbus.Interface(
+                    adapter_obj,
+                    'org.bluez.GattManager1'
+                )
+                if self.gatt_manager is None:
+                    raise RuntimeError("Failed to retrieve GattManager1 interface")
+
+                logger.info("GattManager1 interface initialized successfully")
+            except Exception as e:
+                logger.error(f"Initialization failed for GattManager1 interface: {str(e)}")
+                return False
             
             self.ad_manager = dbus.Interface(
                 adapter_obj,
