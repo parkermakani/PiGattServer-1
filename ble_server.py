@@ -85,7 +85,9 @@ class GattCharacteristic(dbus.service.Object):
         self.service = service
         self.flags = flags
         self.value = []
+        self._is_registered = False
         dbus.service.Object.__init__(self, bus, self.path)
+        self._is_registered = True
 
     def get_properties(self):
         return {
@@ -96,6 +98,15 @@ class GattCharacteristic(dbus.service.Object):
                 'Value': dbus.Array(self.value, signature='y'),
             }
         }
+
+    def cleanup(self):
+        """Clean up the characteristic D-Bus registration."""
+        if self._is_registered:
+            try:
+                self.remove_from_connection()
+                self._is_registered = False
+            except Exception as e:
+                logger.warning(f"Error cleaning up characteristic {self.path}: {str(e)}")
 
     @dbus.service.method('org.bluez.GattCharacteristic1',
                         in_signature='a{sv}', out_signature='ay')
@@ -116,7 +127,9 @@ class GattService(dbus.service.Object):
         self.uuid = uuid
         self.primary = primary
         self.characteristics = []
+        self._is_registered = False
         dbus.service.Object.__init__(self, bus, self.path)
+        self._is_registered = True
 
     def get_properties(self):
         return {
@@ -128,6 +141,21 @@ class GattService(dbus.service.Object):
                     signature='o')
             }
         }
+
+    def cleanup(self):
+        """Clean up the service and its characteristics."""
+        for characteristic in self.characteristics:
+            try:
+                characteristic.cleanup()
+            except Exception as e:
+                logger.warning(f"Error cleaning up characteristic: {str(e)}")
+
+        if self._is_registered:
+            try:
+                self.remove_from_connection()
+                self._is_registered = False
+            except Exception as e:
+                logger.warning(f"Error cleaning up service {self.path}: {str(e)}")
 
     def get_path(self):
         return dbus.ObjectPath(self.path)
@@ -164,7 +192,18 @@ class Advertisement(dbus.service.Object):
         self.service_data = None
         self.local_name = None
         self.include_tx_power = None
+        self._is_registered = False
         dbus.service.Object.__init__(self, bus, self.path)
+        self._is_registered = True
+
+    def cleanup(self):
+        """Clean up the advertisement D-Bus registration."""
+        if self._is_registered:
+            try:
+                self.remove_from_connection()
+                self._is_registered = False
+            except Exception as e:
+                logger.warning(f"Error cleaning up advertisement {self.path}: {str(e)}")
 
     def get_properties(self):
         properties = dict()
@@ -214,6 +253,8 @@ class BLEGATTServer:
         self.bus = None
         self.setup_timeout = 30  # seconds
         self.registration_timeout = 15  # seconds
+        self._cleanup_lock = threading.Lock()
+        self._is_cleaning_up = False
 
     @retry_with_backoff(max_retries=3, base_delay=2)
     def reset_adapter(self, force=False):
@@ -304,11 +345,20 @@ class BLEGATTServer:
                 return True
 
             if self.advertisement:
-                ad_manager = dbus.Interface(
-                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
-                    'org.bluez.LEAdvertisingManager1'
-                )
-                ad_manager.UnregisterAdvertisement(self.advertisement.get_path())
+                try:
+                    ad_manager = dbus.Interface(
+                        self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                        'org.bluez.LEAdvertisingManager1'
+                    )
+                    ad_manager.UnregisterAdvertisement(self.advertisement.get_path())
+                except Exception as e:
+                    logger.warning(f"Error unregistering advertisement: {str(e)}")
+                
+                try:
+                    self.advertisement.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up advertisement object: {str(e)}")
+                
                 self.advertisement = None
                 logger.info("Stopped advertising")
             return True
@@ -325,20 +375,26 @@ class BLEGATTServer:
                 return True
 
             if self.service:
-                gatt_manager = dbus.Interface(
-                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
-                    'org.bluez.GattManager1'
-                )
-                gatt_manager.UnregisterApplication(self.service.get_path())
+                try:
+                    gatt_manager = dbus.Interface(
+                        self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                        'org.bluez.GattManager1'
+                    )
+                    gatt_manager.UnregisterApplication(self.service.get_path())
+                except dbus.exceptions.DBusException as e:
+                    if "org.bluez.Error.DoesNotExist" not in str(e):
+                        raise
+                    logger.warning(f"Service already unregistered: {str(e)}")
+                
+                try:
+                    self.service.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error cleaning up service object: {str(e)}")
+                
                 self.service = None
                 logger.info("Service unregistered successfully")
             return True
 
-        except dbus.exceptions.DBusException as e:
-            if "org.bluez.Error.DoesNotExist" in str(e):
-                logger.error(f"Failed to unregister service: {str(e)}")
-            else:
-                raise
         except Exception as e:
             logger.error(f"Error unregistering service: {str(e)}")
             return False
@@ -440,8 +496,17 @@ class BLEGATTServer:
         except Exception as e:
             logger.error(f"Failed to register service: {str(e)}")
             # Cleanup on registration failure
-            self.unregister_service()
+            self.cleanup_service_registration()
             return False
+
+    def cleanup_service_registration(self):
+        """Clean up service registration in case of failure."""
+        try:
+            if self.service:
+                self.service.cleanup()
+                self.service = None
+        except Exception as e:
+            logger.error(f"Error cleaning up service registration: {str(e)}")
 
     def run(self):
         """Start the BLE GATT server."""
@@ -496,7 +561,13 @@ class BLEGATTServer:
             raise
 
     def cleanup(self):
-        """Clean up resources and stop the server."""
+        """Clean up resources and stop the server with improved reliability."""
+        with self._cleanup_lock:
+            if self._is_cleaning_up:
+                logger.info("Cleanup already in progress")
+                return
+            self._is_cleaning_up = True
+
         logger.info("Performing adapter cleanup...")
         try:
             if self.is_development:
@@ -509,10 +580,25 @@ class BLEGATTServer:
             cleanup_timeout = 10
             start_time = time.time()
 
-            while time.time() - start_time < cleanup_timeout:
+            cleanup_success = False
+            while time.time() - start_time < cleanup_timeout and not cleanup_success:
                 try:
-                    self.stop_advertising()
-                    self.unregister_service()
+                    # Stop advertising first
+                    if self.advertisement:
+                        self.stop_advertising()
+
+                    # Then unregister service
+                    if self.service:
+                        self.unregister_service()
+
+                    # Power down the adapter
+                    if self.adapter_props is not None:
+                        try:
+                            self.adapter_props.Set(self.adapter_interface, 'Powered', False)
+                        except Exception as e:
+                            logger.warning(f"Error powering down adapter: {str(e)}")
+
+                    cleanup_success = True
                     break
                 except Exception as e:
                     if time.time() - start_time < cleanup_timeout:
@@ -520,25 +606,36 @@ class BLEGATTServer:
                         time.sleep(1)
                     else:
                         logger.error(f"Cleanup timeout exceeded: {str(e)}")
+                        break
 
-            if self.adapter_props is not None:
-                try:
-                    self.adapter_props.Set(self.adapter_interface, 'Powered', False)
-                except Exception as e:
-                    logger.warning(f"Error powering down adapter: {str(e)}")
-
+            # Stop the GLib main loop
             if self.mainloop is not None and self.mainloop.is_running():
-                self.mainloop.quit()
-                if hasattr(self, 'mainloop_thread'):
-                    self.mainloop_thread.join(timeout=5)
+                try:
+                    self.mainloop.quit()
+                    if hasattr(self, 'mainloop_thread'):
+                        self.mainloop_thread.join(timeout=5)
+                except Exception as e:
+                    logger.warning(f"Error stopping main loop: {str(e)}")
 
-            logger.info("Cleanup completed successfully")
+            # Final D-Bus cleanup
+            try:
+                if hasattr(self, 'bus') and self.bus is not None:
+                    self.bus.close()
+            except Exception as e:
+                logger.warning(f"Error closing D-Bus connection: {str(e)}")
+
+            if cleanup_success:
+                logger.info("Cleanup completed successfully")
+            else:
+                logger.warning("Cleanup completed with some errors")
+
             logger.info("GATT server stopped")
 
         except Exception as e:
             logger.error(f"Error during cleanup: {str(e)}")
         finally:
             self.running = False
+            self._is_cleaning_up = False
 
 if __name__ == "__main__":
     server = BLEGATTServer()
