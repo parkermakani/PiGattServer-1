@@ -131,7 +131,7 @@ class GattCharacteristic(dbus.service.Object):
         self.value = dbus.Array([dbus.Byte(b) for b in value], signature='y')
         
     @dbus.service.method('org.bluez.GattCharacteristic1',
-                        in_signature='b', 
+                        in_signature='', 
                         out_signature='')
     def StartNotify(self):
         """Start notifications for this characteristic."""
