@@ -41,11 +41,10 @@ class BLEGATTServer:
             self.bus = dbus.SystemBus()
             self.mainloop = GLib.MainLoop()
 
-            # Initialize adapter
-            self.adapter = dbus.Interface(
-                self.bus.get_object('org.bluez', '/org/bluez/hci0'),
-                'org.bluez.Adapter1'
-            )
+            # Initialize adapter and properties interface
+            adapter_obj = self.bus.get_object('org.bluez', '/org/bluez/hci0')
+            self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
+            self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
             
             # Reset adapter
             self.reset_adapter()
@@ -64,10 +63,10 @@ class BLEGATTServer:
 
         try:
             logger.info("Resetting Bluetooth adapter...")
-            # Changed from SetProperty to Set
-            self.adapter.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(0))
+            # Use Properties interface to set adapter power state
+            self.adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(0))
             time.sleep(1)
-            self.adapter.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
+            self.adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
             logger.info("Bluetooth adapter reset successfully")
             return True
         except dbus.exceptions.DBusException as e:
@@ -146,6 +145,16 @@ class BLEGATTServer:
                 self.bus.unexport(self.service.path)
         except Exception as e:
             logger.error(f"Error during service cleanup: {str(e)}")
+
+    def get_adapter_properties(self):
+        """Get all adapter properties using Properties interface."""
+        if self.is_development:
+            return {"Powered": True, "Discoverable": True}
+        try:
+            return self.adapter_props.GetAll('org.bluez.Adapter1')
+        except Exception as e:
+            logger.error(f"Failed to get adapter properties: {str(e)}")
+            return {}
 
     def run(self):
         """Start the GATT server and run the main loop."""
