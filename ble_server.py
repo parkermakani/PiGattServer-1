@@ -21,6 +21,124 @@ else:
 
 from service_definitions import ServiceDefinitions, CharacteristicProperties
 
+class GattService(dbus.service.Object):
+    """
+    GATT Service implementation using D-Bus.
+    """
+    
+    def __init__(self, bus, index, uuid):
+        self.path = f'/org/bluez/example/service{index}'
+        self.uuid = uuid
+        self.bus = bus
+        self.characteristics = []
+        self.next_index = 0
+        
+        if "REPL_ID" in os.environ:
+            logger.info(f"Development mode: Simulating GATT service at {self.path}")
+            return
+            
+        super().__init__(bus, self.path)
+
+    def get_properties(self):
+        """Return the service properties dictionary."""
+        return {
+            'org.bluez.GattService1': {
+                'UUID': self.uuid,
+                'Primary': True,
+                'Characteristics': dbus.Array(
+                    self.get_characteristic_paths(),
+                    signature='o'
+                )
+            }
+        }
+
+    def get_path(self):
+        """Return the D-Bus path of the service."""
+        return dbus.ObjectPath(self.path)
+
+    def add_characteristic(self, characteristic):
+        """Add a characteristic to this service."""
+        self.characteristics.append(characteristic)
+
+    def get_characteristic_paths(self):
+        """Get the D-Bus paths of all characteristics."""
+        result = []
+        for chrc in self.characteristics:
+            result.append(chrc.get_path())
+        return result
+
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        """Get all properties for the specified interface."""
+        if interface != 'org.bluez.GattService1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArguments',
+                f'Unknown interface: {interface}')
+
+        return self.get_properties()['org.bluez.GattService1']
+
+class GattCharacteristic(dbus.service.Object):
+    """
+    GATT Characteristic implementation using D-Bus.
+    """
+    
+    def __init__(self, bus, index, uuid, properties, service):
+        self.path = f'{service.path}/char{index}'
+        self.uuid = uuid
+        self.service = service
+        self.properties = properties
+        self.value = dbus.Array([], signature='y')
+        self.bus = bus
+        
+        if "REPL_ID" in os.environ:
+            logger.info(f"Development mode: Simulating GATT characteristic at {self.path}")
+            return
+            
+        super().__init__(bus, self.path)
+
+    def get_properties(self):
+        """Return the characteristic properties dictionary."""
+        return {
+            'org.bluez.GattCharacteristic1': {
+                'Service': self.service.get_path(),
+                'UUID': self.uuid,
+                'Properties': self.properties,
+                'Value': self.value
+            }
+        }
+
+    def get_path(self):
+        """Return the D-Bus path of the characteristic."""
+        return dbus.ObjectPath(self.path)
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                        in_signature='', out_signature='ay')
+    def ReadValue(self, options=None):
+        """Read the characteristic value."""
+        logger.info(f'Reading characteristic value at {self.path}')
+        return self.value
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                        in_signature='ay', out_signature='')
+    def WriteValue(self, value, options=None):
+        """Write the characteristic value."""
+        logger.info(f'Writing characteristic value at {self.path}')
+        self.value = value
+
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        """Get all properties for the specified interface."""
+        if interface != 'org.bluez.GattCharacteristic1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArguments',
+                f'Unknown interface: {interface}')
+
+        return self.get_properties()['org.bluez.GattCharacteristic1']
+
 class BLEGATTServer:
     def __init__(self):
         self.is_development = "REPL_ID" in os.environ
