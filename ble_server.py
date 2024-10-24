@@ -275,7 +275,7 @@ class BLEGATTServer:
                 return self.reset_adapter(force=True)
             raise
 
-    def _register_service(self):
+    def register_service(self):
         """Register GATT service and characteristics."""
         try:
             if self.is_development:
@@ -313,7 +313,7 @@ class BLEGATTServer:
             logger.error(f"Failed to register service: {str(e)}")
             return False
 
-    def _start_advertising(self):
+    def start_advertising(self):
         """Start advertising the GATT service."""
         try:
             if self.is_development:
@@ -340,7 +340,7 @@ class BLEGATTServer:
             logger.error(f"Failed to start advertising: {str(e)}")
             return False
 
-    def _stop_advertising(self):
+    def stop_advertising(self):
         """Stop advertising the GATT service."""
         try:
             if self.is_development:
@@ -360,7 +360,7 @@ class BLEGATTServer:
             logger.error(f"Failed to stop advertising: {str(e)}")
             return False
 
-    def _unregister_service(self):
+    def unregister_service(self):
         """Unregister the GATT service."""
         try:
             if self.is_development:
@@ -404,8 +404,8 @@ class BLEGATTServer:
                 self.adapter_props.Set(self.adapter_interface, 'Powered', True)
                 logger.info("Bluetooth adapter powered on")
 
-                self._register_service()
-                self._start_advertising()
+                self.register_service()
+                self.start_advertising()
             else:
                 logger.info("Development mode: Running mock server")
                 self.running = True
@@ -428,8 +428,8 @@ class BLEGATTServer:
             self.running = False
 
             try:
-                self._stop_advertising()
-                self._unregister_service()
+                self.stop_advertising()
+                self.unregister_service()
             except Exception as e:
                 logger.warning(f"Error during service cleanup: {str(e)}")
 
