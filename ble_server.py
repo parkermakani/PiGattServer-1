@@ -64,9 +64,10 @@ class BLEGATTServer:
 
         try:
             logger.info("Resetting Bluetooth adapter...")
-            self.adapter.SetProperty('Powered', dbus.Boolean(0))
+            # Changed from SetProperty to Set
+            self.adapter.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(0))
             time.sleep(1)
-            self.adapter.SetProperty('Powered', dbus.Boolean(1))
+            self.adapter.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
             logger.info("Bluetooth adapter reset successfully")
             return True
         except dbus.exceptions.DBusException as e:
