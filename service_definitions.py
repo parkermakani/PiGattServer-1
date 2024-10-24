@@ -44,6 +44,90 @@ class CharacteristicProperties:
         "initial_value": bytearray([0x00])
     }
 
+class GattCharacteristic(dbus.service.Object):
+    """
+    GATT Characteristic implementation using D-Bus.
+    """
+
+    def __init__(self, bus, index, uuid, properties, service):
+        logger.debug(f"Initializing GATT characteristic with index {index} and UUID {uuid}")
+        self.path = f'{service.path}/char{index}'
+        self.uuid = uuid
+        self.service = service
+        self.flags = properties
+        self.notifying = False
+        self.value = dbus.Array([dbus.Byte(0)], signature=dbus.Signature('y'))
+        self.bus = bus
+
+        super().__init__(bus, self.path)
+        logger.debug(f"GATT characteristic created at path {self.path}")
+
+    def get_properties(self):
+        """Return the characteristic properties dictionary."""
+        logger.debug(f"Getting properties for characteristic at {self.path}")
+        return {
+            'org.bluez.GattCharacteristic1': {
+                'Service': self.service.get_path(),
+                'UUID': dbus.String(self.uuid),
+                'Flags': dbus.Array(self.flags, signature='s'),
+                'Notifying': dbus.Boolean(self.notifying)
+            }
+        }
+
+    def get_path(self):
+        """Return the D-Bus path of the characteristic."""
+        return dbus.ObjectPath(self.path)
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                         in_signature='a{sv}', 
+                         out_signature='ay')
+    def ReadValue(self, options):
+        """Read the characteristic value."""
+        logger.info(f'Reading characteristic value at {self.path}')
+        return self.value
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                         in_signature='aya{sv}', 
+                         out_signature='')
+    def WriteValue(self, value, options):
+        """Write the characteristic value."""
+        logger.info(f'Writing characteristic value at {self.path}')
+        self.value = dbus.Array([dbus.Byte(b) for b in value], signature='y')
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                         in_signature='', 
+                         out_signature='')
+    def StartNotify(self):
+        """Start notifications for this characteristic."""
+        if self.notifying:
+            return
+        self.notifying = True
+        logger.info(f'Started notifications for {self.path}')
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                         in_signature='', 
+                         out_signature='')
+    def StopNotify(self):
+        """Stop notifications for this characteristic."""
+        if not self.notifying:
+            return
+        self.notifying = False
+        logger.info(f'Stopped notifications for {self.path}')
+
+    @dbus.service.method('org.freedesktop.DBus.Properties',
+                         in_signature='s',
+                         out_signature='a{sv}')
+    def GetAll(self, interface):
+        """Get all properties for the specified interface."""
+        logger.debug(f"GetAll called for interface {interface} on characteristic {self.path}")
+        if interface != 'org.bluez.GattCharacteristic1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArguments',
+                f'Unknown interface: {interface}')
+
+        return self.get_properties()['org.bluez.GattCharacteristic1']
+
+
 class GattService(dbus.service.Object):
     """
     GATT Service implementation using D-Bus.

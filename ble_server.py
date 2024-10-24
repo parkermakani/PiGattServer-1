@@ -19,7 +19,7 @@ if "REPL_ID" in os.environ:
 else:
     logger.info("Using dbus-python implementation")
 
-from service_definitions import ServiceDefinitions, CharacteristicProperties, GattService
+from service_definitions import ServiceDefinitions, CharacteristicProperties, GattService, GattCharacteristic
 
 BLUEZ_SERVICE_NAME = 'org.bluez'
 GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
