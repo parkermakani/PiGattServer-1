@@ -77,6 +77,71 @@ def retry_with_backoff(max_retries=5, base_delay=1):
         return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
     return decorator
 
+class GattCharacteristic(dbus.service.Object):
+    def __init__(self, bus, index, uuid, flags, service):
+        self.path = service.path + '/char' + str(index)
+        self.bus = bus
+        self.uuid = uuid
+        self.service = service
+        self.flags = flags
+        self.value = []
+        dbus.service.Object.__init__(self, bus, self.path)
+
+    def get_properties(self):
+        return {
+            'org.bluez.GattCharacteristic1': {
+                'Service': self.service.get_path(),
+                'UUID': self.uuid,
+                'Flags': self.flags,
+                'Value': self.value,
+            }
+        }
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                        in_signature='a{sv}', out_signature='ay')
+    def ReadValue(self, options):
+        return self.value
+
+    @dbus.service.method('org.bluez.GattCharacteristic1',
+                        in_signature='aya{sv}')
+    def WriteValue(self, value, options):
+        self.value = value
+
+class GattService(dbus.service.Object):
+    def __init__(self, bus, index, uuid, primary=True):
+        self.path = f'/org/bluez/example/service{index}'
+        self.bus = bus
+        self.uuid = uuid
+        self.primary = primary
+        self.characteristics = []
+        dbus.service.Object.__init__(self, bus, self.path)
+
+    def get_properties(self):
+        return {
+            'org.bluez.GattService1': {
+                'UUID': self.uuid,
+                'Primary': self.primary,
+                'Characteristics': dbus.Array(
+                    self.get_characteristic_paths(),
+                    signature='o')
+            }
+        }
+
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
+
+    def add_characteristic(self, characteristic):
+        self.characteristics.append(characteristic)
+
+    def get_characteristic_paths(self):
+        result = []
+        for chrc in self.characteristics:
+            result.append(chrc.get_path())
+        return result
+
+    def get_characteristics(self):
+        return self.characteristics
+
 class BLEGATTServer:
     def __init__(self):
         self.is_development = "REPL_ID" in os.environ
@@ -86,6 +151,8 @@ class BLEGATTServer:
         self.adapter_interface = 'org.bluez.Adapter1'
         self.status_update_thread = None
         self.running = False
+        self.service = None
+        self.advertisement = None
 
     def setup_dbus(self):
         """Initialize D-Bus connection and get Bluetooth adapter."""
@@ -132,7 +199,6 @@ class BLEGATTServer:
                 logger.info("Development mode: Simulating force reset")
                 return True
 
-            # Stop dependent services first
             dependent_services = ['bluetooth-mesh', 'bluealsa']
             for service in dependent_services:
                 try:
@@ -140,7 +206,6 @@ class BLEGATTServer:
                 except Exception as e:
                     logger.warning(f"Error stopping {service}: {str(e)}")
 
-            # Stop any existing bluetoothd processes
             try:
                 subprocess.run(['pkill', '-9', 'bluetoothd'], check=False, timeout=10)
             except Exception as e:
@@ -148,7 +213,6 @@ class BLEGATTServer:
 
             time.sleep(2)
 
-            # Reset Bluetooth interface
             try:
                 subprocess.run(['hciconfig', 'hci0', 'down'], check=False, timeout=10)
                 time.sleep(1)
@@ -156,26 +220,23 @@ class BLEGATTServer:
             except Exception as e:
                 logger.warning(f"Error resetting Bluetooth interface: {str(e)}")
 
-            # Restart bluetooth service
             try:
                 subprocess.run(['systemctl', 'restart', 'bluetooth'], check=True, timeout=30)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to restart bluetooth service: {str(e)}")
                 return False
             
-            # Wait for bluetooth service to be fully active
             if not self.wait_for_service('bluetooth', timeout=30):
                 logger.error("Timeout waiting for bluetooth service to become active")
                 return False
 
-            # Restart dependent services
             for service in dependent_services:
                 try:
                     subprocess.run(['systemctl', 'restart', service], check=False, timeout=10)
                 except Exception as e:
                     logger.warning(f"Error restarting {service}: {str(e)}")
 
-            time.sleep(3)  # Allow time for services to stabilize
+            time.sleep(3)
             
             return True
         except Exception as e:
@@ -195,13 +256,11 @@ class BLEGATTServer:
                 if not self.force_reset_bluetooth():
                     raise BluetoothError("Force reset failed")
                 
-                # Re-initialize D-Bus connection after force reset
                 if not self.setup_dbus():
                     raise BluetoothError("Failed to reinitialize D-Bus after force reset")
 
             adapter_interface = dbus.Interface(self.adapter, self.adapter_interface)
             
-            # Power cycle the adapter
             self.adapter_props.Set(self.adapter_interface, 'Powered', False)
             time.sleep(2)
             self.adapter_props.Set(self.adapter_interface, 'Powered', True)
@@ -216,40 +275,136 @@ class BLEGATTServer:
                 return self.reset_adapter(force=True)
             raise
 
+    def _register_service(self):
+        """Register GATT service and characteristics."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating service registration")
+                return True
+
+            self.service = GattService(self.bus, 0, ServiceDefinitions.CUSTOM_SERVICE_UUID)
+
+            characteristics = [
+                ('temperature', CharacteristicProperties.TEMPERATURE),
+                ('humidity', CharacteristicProperties.HUMIDITY),
+                ('status', CharacteristicProperties.STATUS)
+            ]
+
+            for idx, (name, props) in enumerate(characteristics):
+                char = GattCharacteristic(
+                    self.bus,
+                    idx,
+                    props['uuid'],
+                    props['properties'],
+                    self.service
+                )
+                self.service.add_characteristic(char)
+                logger.info(f"Registered characteristic: {name} at {char.path}")
+
+            self.bus.get_object('org.bluez', '/org/bluez').RegisterService(
+                self.service.get_path(),
+                {'ServiceInterface': 'org.bluez.GattService1'}
+            )
+
+            logger.info("Service and characteristics registered successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to register service: {str(e)}")
+            return False
+
+    def _start_advertising(self):
+        """Start advertising the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating advertising start")
+                return True
+
+            self.advertisement = self.bus.get_object('org.bluez', '/org/bluez/advertisement0')
+            ad_props = {
+                'org.bluez.LEAdvertisement1': {
+                    'Type': 'peripheral',
+                    'ServiceUUIDs': [ServiceDefinitions.CUSTOM_SERVICE_UUID],
+                    'IncludeTxPower': True
+                }
+            }
+            self.bus.get_object('org.bluez', '/org/bluez').RegisterAdvertisement(
+                self.advertisement,
+                ad_props
+            )
+
+            logger.info("Started advertising GATT service")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start advertising: {str(e)}")
+            return False
+
+    def _stop_advertising(self):
+        """Stop advertising the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating advertising stop")
+                return True
+
+            if self.advertisement:
+                self.bus.get_object('org.bluez', '/org/bluez').UnregisterAdvertisement(
+                    self.advertisement
+                )
+                self.advertisement = None
+                logger.info("Stopped advertising GATT service")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to stop advertising: {str(e)}")
+            return False
+
+    def _unregister_service(self):
+        """Unregister the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating service unregistration")
+                return True
+
+            if self.service:
+                self.bus.get_object('org.bluez', '/org/bluez').UnregisterService(
+                    self.service.get_path()
+                )
+                self.service = None
+                logger.info("Unregistered GATT service")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to unregister service: {str(e)}")
+            return False
+
     def run(self):
         """Start the BLE GATT server."""
         try:
-            # Check if Bluetooth is available
             if not check_bluetooth_status():
                 raise BluetoothError("Bluetooth is not available")
 
-            # Setup D-Bus
             if not self.setup_dbus():
                 raise BluetoothError("Failed to setup D-Bus")
 
-            # Reset Bluetooth adapter
             logger.info("Resetting Bluetooth adapter...")
             if not self.reset_adapter():
                 raise BluetoothError("Failed to reset adapter during setup")
 
-            # Initialize GLib mainloop
             if not self.is_development:
                 self.mainloop = GLib.MainLoop()
                 self.running = True
 
-                # Start the mainloop in a separate thread
                 self.mainloop_thread = threading.Thread(target=self.mainloop.run)
                 self.mainloop_thread.daemon = True
                 self.mainloop_thread.start()
 
-                # Set adapter properties
                 self.adapter_props.Set(self.adapter_interface, 'Powered', True)
                 logger.info("Bluetooth adapter powered on")
 
-                # Register service and characteristics
                 self._register_service()
-                
-                # Start advertising
                 self._start_advertising()
             else:
                 logger.info("Development mode: Running mock server")
@@ -272,23 +427,18 @@ class BLEGATTServer:
 
             self.running = False
 
-            # Stop advertising and unregister service
             try:
-                if hasattr(self, '_stop_advertising'):
-                    self._stop_advertising()
-                if hasattr(self, '_unregister_service'):
-                    self._unregister_service()
+                self._stop_advertising()
+                self._unregister_service()
             except Exception as e:
                 logger.warning(f"Error during service cleanup: {str(e)}")
 
-            # Power down adapter
             if self.adapter_props is not None:
                 try:
                     self.adapter_props.Set(self.adapter_interface, 'Powered', False)
                 except Exception as e:
                     logger.warning(f"Error powering down adapter: {str(e)}")
 
-            # Stop mainloop
             if self.mainloop is not None and self.mainloop.is_running():
                 self.mainloop.quit()
                 if hasattr(self, 'mainloop_thread'):
