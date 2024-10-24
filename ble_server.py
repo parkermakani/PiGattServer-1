@@ -104,43 +104,64 @@ class BLEGATTServer:
         self.dbus_service_name = None
         self._setup_dbus()
 
-    def _setup_dbus(self):
-        """Initialize D-Bus and BlueZ interfaces."""
-        logger.debug("Setting up D-Bus for BLEGATTServer")
-        try:
-            if self.is_development:
-                logger.info("Using MockMessageBus for development")
-                self.bus = MockMessageBus()
+        def _setup_dbus(self):
+            """Initialize D-Bus and BlueZ interfaces."""
+            logger.debug("Setting up D-Bus for BLEGATTServer")
+            try:
+                if self.is_development:
+                    logger.info("Using MockMessageBus for development")
+                    self.bus = MockMessageBus()
+                    return True
+
+                # Ensure that bluetoothd is running
+                logger.debug("Ensuring bluetoothd is running")
+                self.ensure_bluetoothd_running()
+
+                # Initialize D-Bus mainloop
+                logger.debug("Initializing D-Bus mainloop and SystemBus")
+                dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+                self.bus = dbus.SystemBus()
+                self.mainloop = GLib.MainLoop()
+
+                # Request D-Bus service name
+                logger.info(f"Attempting to acquire D-Bus service name: {DBUS_SERVICE_NAME}")
+                self.dbus_service_name = dbus.service.BusName(
+                    DBUS_SERVICE_NAME,
+                    self.bus,
+                    do_not_queue=True
+                )
+                logger.info(f"Successfully acquired D-Bus service name: {DBUS_SERVICE_NAME}")
+
+                # Initialize adapter and properties interface
+                logger.debug("Getting Bluetooth adapter object")
+                adapter_obj = self.bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0')
+
+                logger.debug("Creating Adapter1 and Properties interfaces")
+                self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
+                self.adapter_props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
+
+                # Initialize GattManager1 and LEAdvertisingManager1 interfaces
+                logger.debug("Creating GattManager1 and LEAdvertisingManager1 interfaces")
+                self.gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
+                self.ad_manager = dbus.Interface(adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
+
+                # Reset adapter
+                logger.info("Resetting Bluetooth adapter")
+                self.reset_adapter()
+                logger.info("D-Bus setup completed successfully")
                 return True
 
-            self.ensure_bluetoothd_running()
+            except dbus.exceptions.DBusException as e:
+                if "Name already exists" in str(e):
+                    logger.warning("D-Bus service name already in use. Releasing existing service and retrying...")
+                    self._release_existing_service()
+                    return self._setup_dbus()
+                logger.error(f"Failed to setup D-Bus due to D-Bus exception: {str(e)}", exc_info=True)
+                return False
+            except Exception as e:
+                logger.error(f"Failed to setup D-Bus due to unexpected exception: {str(e)}", exc_info=True)
+                return False
 
-            # Initialize D-Bus mainloop
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            self.bus = dbus.SystemBus()
-            self.mainloop = GLib.MainLoop()
-
-            # Request D-Bus service name
-            self.dbus_service_name = dbus.service.BusName(
-                DBUS_SERVICE_NAME,
-                self.bus,
-                do_not_queue=True
-            )
-            logger.info(f"Acquired D-Bus service name: {DBUS_SERVICE_NAME}")
-
-            # Initialize adapter and properties interface
-            adapter_obj = self.bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0')
-            self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
-            self.adapter_props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
-
-            # Initialize GattManager1 and LEAdvertisingManager1 interfaces
-            self.gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
-            self.ad_manager = dbus.Interface(adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
-
-            # Reset adapter
-            self.reset_adapter()
-            logger.info("D-Bus setup completed successfully")
-            return True
 
         except dbus.exceptions.DBusException as e:
             if "Name already exists" in str(e):
