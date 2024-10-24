@@ -436,6 +436,10 @@ class BLEGATTServer:
             if not check_bluetooth_status():
                 raise Exception("Bluetooth is not available")
 
+            # Add a delay before registering the service to ensure BlueZ is ready
+            logger.info("Waiting for 5 seconds to allow BlueZ to stabilize...")
+            time.sleep(5)  # Adjust the duration if needed
+
             if not self.register_service():
                 raise Exception("Failed to register service")
 
