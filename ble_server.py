@@ -25,6 +25,63 @@ class BluetoothError(Exception):
     """Custom exception for Bluetooth-related errors."""
     pass
 
+def retry_with_backoff(max_retries=5, base_delay=1):
+    """Decorator for retry mechanism with exponential backoff.
+    
+    Args:
+        max_retries (int): Maximum number of retry attempts
+        base_delay (float): Initial delay between retries in seconds
+    """
+    def decorator(func):
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except dbus.exceptions.DBusException as e:
+                    last_exception = e
+                    if "org.bluez.Error.Busy" in str(e):
+                        delay = base_delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(f"Adapter busy, retrying in {delay:.1f} seconds (attempt {attempt + 1}/{max_retries})")
+                        time.sleep(delay)
+                    else:
+                        raise
+                except Exception as e:
+                    logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
+                    raise
+            
+            if last_exception:
+                logger.error(f"Max retries ({max_retries}) exceeded in {func.__name__}")
+                raise last_exception
+            
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            last_exception = None
+            
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except dbus.exceptions.DBusException as e:
+                    last_exception = e
+                    if "org.bluez.Error.Busy" in str(e):
+                        delay = base_delay * (2 ** attempt)  # Exponential backoff
+                        logger.warning(f"Adapter busy, retrying in {delay:.1f} seconds (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(delay)
+                    else:
+                        raise
+                except Exception as e:
+                    logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
+                    raise
+            
+            if last_exception:
+                logger.error(f"Max retries ({max_retries}) exceeded in {func.__name__}")
+                raise last_exception
+        
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
+    return decorator
+
 class BLEGATTServer:
     def __init__(self):
         self.is_development = "REPL_ID" in os.environ
@@ -34,30 +91,6 @@ class BLEGATTServer:
         self.adapter_interface = 'org.bluez.Adapter1'
         self.status_update_thread = None
         self.running = False
-        self.max_retries = 5
-        self.base_delay = 1  # Base delay in seconds
-
-    def retry_with_backoff(self, func):
-        """Decorator for retry mechanism with exponential backoff."""
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            delay = self.base_delay
-            last_exception = None
-            
-            for attempt in range(self.max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except dbus.exceptions.DBusException as e:
-                    last_exception = e
-                    if "org.bluez.Error.Busy" in str(e):
-                        logger.warning(f"Adapter busy, retrying in {delay} seconds (attempt {attempt + 1}/{self.max_retries})")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff
-                    else:
-                        raise
-            
-            raise last_exception
-        return wrapper
 
     def setup_dbus(self):
         """Initialize D-Bus connection and get Bluetooth adapter."""
@@ -95,7 +128,7 @@ class BLEGATTServer:
             logger.error(f"Failed to force reset Bluetooth: {str(e)}")
             return False
 
-    @retry_with_backoff
+    @retry_with_backoff(max_retries=5, base_delay=1)
     def reset_adapter(self, force=False):
         """Reset Bluetooth adapter with optional force reset."""
         try:
@@ -123,9 +156,9 @@ class BLEGATTServer:
             if not force and "org.bluez.Error.Busy" in str(e):
                 logger.info("Attempting force reset due to busy adapter")
                 return self.reset_adapter(force=True)
-            return False
+            raise
 
-    @retry_with_backoff
+    @retry_with_backoff(max_retries=5, base_delay=1)
     def set_discoverable(self, enable=True, timeout=180):
         """Enable or disable adapter discoverability with timeout."""
         try:
@@ -149,7 +182,7 @@ class BLEGATTServer:
             return True
         except Exception as e:
             logger.error(f"Failed to set discoverable mode: {str(e)}")
-            return False
+            raise
 
     def get_bluetooth_status(self):
         """Get current Bluetooth adapter status."""
