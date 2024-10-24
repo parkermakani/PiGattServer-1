@@ -139,12 +139,35 @@ class GattCharacteristic(dbus.service.Object):
 
         return self.get_properties()['org.bluez.GattCharacteristic1']
 
+class GattManager1Interface(dbus.service.Object):
+    """
+    Implementation of the GattManager1 interface.
+    """
+    def __init__(self, bus):
+        super().__init__(bus, '/org/bluez/example')
+        self.services = {}
+
+    @dbus.service.method('org.bluez.GattManager1',
+                        in_signature='oa{sv}',
+                        out_signature='')
+    def RegisterApplication(self, application_path, options):
+        """Register a GATT application with this manager."""
+        logger.info(f"Registering application at {application_path}")
+
+    @dbus.service.method('org.bluez.GattManager1',
+                        in_signature='o',
+                        out_signature='')
+    def UnregisterApplication(self, application_path):
+        """Unregister a GATT application from this manager."""
+        logger.info(f"Unregistering application at {application_path}")
+
 class BLEGATTServer:
     def __init__(self):
         self.is_development = "REPL_ID" in os.environ
         self.mainloop = None
         self.bus = None
         self.service = None
+        self.gatt_manager = None
         self._setup_dbus()
 
     def _setup_dbus(self):
@@ -163,6 +186,12 @@ class BLEGATTServer:
             adapter_obj = self.bus.get_object('org.bluez', '/org/bluez/hci0')
             self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
             self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
+            
+            # Initialize GattManager1 interface
+            self.gatt_manager = dbus.Interface(
+                adapter_obj,
+                'org.bluez.GattManager1'
+            )
             
             # Reset adapter
             self.reset_adapter()
@@ -222,6 +251,10 @@ class BLEGATTServer:
                 logger.info("Development mode: Simulating service registration")
                 return True
 
+            # Create GattManager1 interface implementation
+            self.gatt_manager_impl = GattManager1Interface(self.bus)
+
+            # Create and register the service
             self.service = GattService(self.bus, 0, ServiceDefinitions.CUSTOM_SERVICE_UUID)
 
             characteristics = [
@@ -242,13 +275,16 @@ class BLEGATTServer:
                 self.service.add_characteristic(char)
                 logger.info(f"Registered characteristic: {name} at {char.path}")
 
-            # Register the service with BlueZ
+            # Register the application with GattManager1
             try:
-                self.bus.export(self.service.path, self.service)
-                logger.info("Service and characteristics registered successfully")
+                self.gatt_manager.RegisterApplication(
+                    dbus.ObjectPath('/org/bluez/example'),
+                    dbus.Dictionary({}, signature='sv')
+                )
+                logger.info("Service registered with GattManager1 successfully")
                 return True
-            except Exception as e:
-                logger.error(f"Failed to register service: {str(e)}")
+            except dbus.exceptions.DBusException as e:
+                logger.error(f"Failed to register application: {str(e)}")
                 self._cleanup_service()
                 raise
 
@@ -259,8 +295,24 @@ class BLEGATTServer:
     def _cleanup_service(self):
         """Clean up service registration."""
         try:
+            if self.is_development:
+                logger.info("Development mode: Skipping service cleanup")
+                return
+
+            if hasattr(self, 'gatt_manager') and hasattr(self, 'service'):
+                try:
+                    self.gatt_manager.UnregisterApplication(
+                        dbus.ObjectPath('/org/bluez/example')
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to unregister application: {str(e)}")
+
             if hasattr(self, 'service'):
-                self.bus.unexport(self.service.path)
+                try:
+                    self.bus.unexport(self.service.path)
+                except Exception as e:
+                    logger.error(f"Failed to unexport service: {str(e)}")
+
         except Exception as e:
             logger.error(f"Error during service cleanup: {str(e)}")
 
