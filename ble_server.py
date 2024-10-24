@@ -30,13 +30,17 @@ GATT_SERVICE_IFACE = 'org.bluez.GattService1'
 GATT_CHRC_IFACE = 'org.bluez.GattCharacteristic1'
 LE_ADVERTISEMENT_IFACE = 'org.bluez.LEAdvertisement1'
 
+# Updated D-Bus service name and base path
+DBUS_SERVICE_NAME = 'org.bluez.pigattserver'
+DBUS_BASE_PATH = '/org/bluez/pigattserver'
+
 class GattService(dbus.service.Object):
     """
     GATT Service implementation using D-Bus.
     """
     
     def __init__(self, bus, index, uuid):
-        self.path = f'/org/bluez/example/service{index}'
+        self.path = f'{DBUS_BASE_PATH}/service{index}'
         self.uuid = uuid
         self.bus = bus
         self.characteristics = []
@@ -176,14 +180,14 @@ class Advertisement(dbus.service.Object):
     LEAdvertisement implementation using D-Bus.
     """
     def __init__(self, bus, index, advertising_type):
-        self.path = f'/org/bluez/example/advertisement{index}'
+        self.path = f'{DBUS_BASE_PATH}/advertisement{index}'
         self.bus = bus
         self.ad_type = advertising_type
         self.service_uuids = [ServiceDefinitions.CUSTOM_SERVICE_UUID]
         self.manufacturer_data = {}
         self.solicit_uuids = []
         self.service_data = {}
-        self.local_name = 'BLE GATT Server'
+        self.local_name = 'PiGattServer'
         self.include_tx_power = True
         
         if "REPL_ID" in os.environ:
@@ -252,7 +256,7 @@ class BLEGATTServer:
 
             # Request D-Bus service name
             self.dbus_service_name = dbus.service.BusName(
-                'org.bluez.example',
+                DBUS_SERVICE_NAME,
                 self.bus,
                 do_not_queue=True
             )
@@ -425,7 +429,7 @@ class BLEGATTServer:
             retry_count = 0
             while retry_count < max_retries:
                 try:
-                    app_path = dbus.ObjectPath('/org/bluez/example')
+                    app_path = dbus.ObjectPath(DBUS_BASE_PATH)
                     self.gatt_manager.RegisterApplication(
                         app_path,
                         dbus.Dictionary({}, signature='sv'),
@@ -462,7 +466,7 @@ class BLEGATTServer:
 
             if hasattr(self, 'gatt_manager'):
                 try:
-                    app_path = dbus.ObjectPath('/org/bluez/example')
+                    app_path = dbus.ObjectPath(DBUS_BASE_PATH)
                     self.gatt_manager.UnregisterApplication(app_path)
                 except Exception as e:
                     logger.error(f"Failed to unregister application: {str(e)}")
