@@ -21,8 +21,7 @@ else:
 
 from service_definitions import ServiceDefinitions, CharacteristicProperties
 
-# Rest of the code remains the same until the register_service method
-
+class BLEGATTServer:
     def register_service(self):
         """Register GATT service and characteristics with improved reliability."""
         try:
@@ -50,4 +49,24 @@ from service_definitions import ServiceDefinitions, CharacteristicProperties
                 self.service.add_characteristic(char)
                 logger.info(f"Registered characteristic: {name} at {char.path}")
 
-            # Rest of the method remains the same
+            # Register the service with BlueZ
+            try:
+                self.bus.export(self.service.path, self.service)
+                logger.info("Service and characteristics registered successfully")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to register service: {str(e)}")
+                self._cleanup_service()
+                raise
+
+        except Exception as e:
+            logger.error(f"Error during service registration: {str(e)}")
+            return False
+
+    def _cleanup_service(self):
+        """Clean up service registration."""
+        try:
+            if hasattr(self, 'service'):
+                self.bus.unexport(self.service.path)
+        except Exception as e:
+            logger.error(f"Error during service cleanup: {str(e)}")
