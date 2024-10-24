@@ -215,6 +215,134 @@ class BLEGATTServer:
         self.setup_timeout = 30  # seconds
         self.registration_timeout = 15  # seconds
 
+    @retry_with_backoff(max_retries=3, base_delay=2)
+    def reset_adapter(self, force=False):
+        """Reset the Bluetooth adapter with retry mechanism."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating adapter reset")
+                return True
+
+            # Try normal reset first
+            try:
+                self.adapter_props.Set(self.adapter_interface, 'Powered', False)
+                time.sleep(1)
+                self.adapter_props.Set(self.adapter_interface, 'Powered', True)
+                return True
+            except dbus.exceptions.DBusException as e:
+                if "org.bluez.Error.Busy" in str(e):
+                    if not force:
+                        logger.info("Attempting force reset due to busy adapter")
+                        return self.reset_adapter(force=True)
+                    else:
+                        logger.info("Performing force reset of Bluetooth adapter")
+                        # Force reset using system commands
+                        try:
+                            subprocess.run(['systemctl', 'stop', 'bluetooth-mesh.service'], check=False)
+                            subprocess.run(['systemctl', 'stop', 'bluealsa.service'], check=False)
+                            subprocess.run(['systemctl', 'stop', 'bluetooth.service'], check=True)
+                            time.sleep(2)
+                            subprocess.run(['systemctl', 'start', 'bluetooth.service'], check=True)
+                            time.sleep(5)
+                            subprocess.run(['systemctl', 'restart', 'bluetooth-mesh.service'], check=False)
+                            subprocess.run(['systemctl', 'restart', 'bluealsa.service'], check=False)
+                            
+                            # Re-initialize D-Bus connection
+                            self.adapter = self.bus.get_object('org.bluez', '/org/bluez/hci0')
+                            self.adapter_props = dbus.Interface(self.adapter, 'org.freedesktop.DBus.Properties')
+                            self.adapter_props.Set(self.adapter_interface, 'Powered', True)
+                            
+                            logger.info("Bluetooth adapter reset successfully")
+                            return True
+                        except subprocess.CalledProcessError as e:
+                            logger.error(f"Failed to force reset adapter: {str(e)}")
+                            return False
+                else:
+                    raise
+
+        except Exception as e:
+            logger.error(f"Failed to reset adapter: {str(e)}")
+            return False
+
+    @retry_with_backoff(max_retries=3, base_delay=2)
+    def start_advertising(self):
+        """Start advertising the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating advertisement start")
+                return True
+
+            # Create and configure advertisement
+            self.advertisement = Advertisement(self.bus, 0, 'peripheral')
+            self.advertisement.service_uuids = [ServiceDefinitions.CUSTOM_SERVICE_UUID]
+            self.advertisement.include_tx_power = True
+
+            # Get LEAdvertisingManager1 interface
+            ad_manager = dbus.Interface(
+                self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                'org.bluez.LEAdvertisingManager1'
+            )
+
+            # Register advertisement
+            ad_manager.RegisterAdvertisement(
+                self.advertisement.get_path(),
+                {}
+            )
+
+            logger.info("Started advertising GATT service")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start advertising: {str(e)}")
+            return False
+
+    def stop_advertising(self):
+        """Stop advertising the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating advertisement stop")
+                return True
+
+            if self.advertisement:
+                ad_manager = dbus.Interface(
+                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                    'org.bluez.LEAdvertisingManager1'
+                )
+                ad_manager.UnregisterAdvertisement(self.advertisement.get_path())
+                self.advertisement = None
+                logger.info("Stopped advertising")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to stop advertising: {str(e)}")
+            return False
+
+    def unregister_service(self):
+        """Unregister the GATT service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating service unregistration")
+                return True
+
+            if self.service:
+                gatt_manager = dbus.Interface(
+                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                    'org.bluez.GattManager1'
+                )
+                gatt_manager.UnregisterApplication(self.service.get_path())
+                self.service = None
+                logger.info("Service unregistered successfully")
+            return True
+
+        except dbus.exceptions.DBusException as e:
+            if "org.bluez.Error.DoesNotExist" in str(e):
+                logger.error(f"Failed to unregister service: {str(e)}")
+            else:
+                raise
+        except Exception as e:
+            logger.error(f"Error unregistering service: {str(e)}")
+            return False
+
     def setup_dbus(self):
         """Initialize D-Bus connection and get Bluetooth adapter."""
         try:
@@ -244,7 +372,6 @@ class BLEGATTServer:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
             return False
 
-    @retry_with_backoff(max_retries=3, base_delay=2)
     def register_service(self):
         """Register GATT service and characteristics with improved reliability."""
         try:
