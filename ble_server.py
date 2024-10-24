@@ -27,7 +27,7 @@ class GattService(dbus.service.Object):
     """
     
     def __init__(self, bus, index, uuid):
-        self.path = f'/org/bluez/example/service{index}'
+        self.path = f'/org/bluez/app/service{index}'
         self.uuid = uuid
         self.bus = bus
         self.characteristics = []
