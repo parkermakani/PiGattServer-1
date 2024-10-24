@@ -93,14 +93,14 @@ class GattCharacteristic(dbus.service.Object):
                 'Service': self.service.get_path(),
                 'UUID': self.uuid,
                 'Flags': self.flags,
-                'Value': self.value,
+                'Value': dbus.Array(self.value, signature='y'),
             }
         }
 
     @dbus.service.method('org.bluez.GattCharacteristic1',
                         in_signature='a{sv}', out_signature='ay')
     def ReadValue(self, options):
-        return self.value
+        return dbus.Array(self.value, signature='y')
 
     @dbus.service.method('org.bluez.GattCharacteristic1',
                         in_signature='aya{sv}')
@@ -108,8 +108,10 @@ class GattCharacteristic(dbus.service.Object):
         self.value = value
 
 class GattService(dbus.service.Object):
+    PATH_BASE = '/org/bluez/example/service'
+
     def __init__(self, bus, index, uuid, primary=True):
-        self.path = f'/org/bluez/example/service{index}'
+        self.path = f'{self.PATH_BASE}{index}'
         self.bus = bus
         self.uuid = uuid
         self.primary = primary
@@ -119,8 +121,8 @@ class GattService(dbus.service.Object):
     def get_properties(self):
         return {
             'org.bluez.GattService1': {
-                'UUID': self.uuid,
-                'Primary': self.primary,
+                'UUID': dbus.String(self.uuid),
+                'Primary': dbus.Boolean(self.primary),
                 'Characteristics': dbus.Array(
                     self.get_characteristic_paths(),
                     signature='o')
@@ -136,11 +138,67 @@ class GattService(dbus.service.Object):
     def get_characteristic_paths(self):
         result = []
         for chrc in self.characteristics:
-            result.append(chrc.get_path())
+            result.append(dbus.ObjectPath(chrc.path))
         return result
 
     def get_characteristics(self):
         return self.characteristics
+
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                        in_signature='s', out_signature='a{sv}')
+    def GetAll(self, interface):
+        if interface != 'org.bluez.GattService1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArgs',
+                f'GetAll called with invalid interface: {interface}')
+        return self.get_properties()['org.bluez.GattService1']
+
+class Advertisement(dbus.service.Object):
+    def __init__(self, bus, index, advertising_type):
+        self.path = f'/org/bluez/example/advertisement{index}'
+        self.bus = bus
+        self.ad_type = advertising_type
+        self.service_uuids = None
+        self.manufacturer_data = None
+        self.solicit_uuids = None
+        self.service_data = None
+        self.local_name = None
+        self.include_tx_power = None
+        dbus.service.Object.__init__(self, bus, self.path)
+
+    def get_properties(self):
+        properties = dict()
+        properties['Type'] = self.ad_type
+        if self.service_uuids is not None:
+            properties['ServiceUUIDs'] = dbus.Array(self.service_uuids, signature='s')
+        if self.manufacturer_data is not None:
+            properties['ManufacturerData'] = dbus.Dictionary(
+                self.manufacturer_data, signature='qv')
+        if self.solicit_uuids is not None:
+            properties['SolicitUUIDs'] = dbus.Array(self.solicit_uuids, signature='s')
+        if self.service_data is not None:
+            properties['ServiceData'] = dbus.Dictionary(self.service_data, signature='sv')
+        if self.local_name is not None:
+            properties['LocalName'] = dbus.String(self.local_name)
+        if self.include_tx_power is not None:
+            properties['IncludeTxPower'] = dbus.Boolean(self.include_tx_power)
+        return {dbus.PROPERTIES_IFACE: properties}
+
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        if interface != 'org.bluez.LEAdvertisement1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArgs',
+                f'GetAll called with invalid interface: {interface}')
+        return self.get_properties()[dbus.PROPERTIES_IFACE]
+
+    @dbus.service.method('org.bluez.LEAdvertisement1',
+                        in_signature='',
+                        out_signature='')
+    def Release(self):
+        logger.info(f'Released advertisement: {self.path}')
 
 class BLEGATTServer:
     def __init__(self):
@@ -153,6 +211,7 @@ class BLEGATTServer:
         self.running = False
         self.service = None
         self.advertisement = None
+        self.bus = None
 
     def setup_dbus(self):
         """Initialize D-Bus connection and get Bluetooth adapter."""
@@ -301,9 +360,14 @@ class BLEGATTServer:
                 self.service.add_characteristic(char)
                 logger.info(f"Registered characteristic: {name} at {char.path}")
 
-            self.bus.get_object('org.bluez', '/org/bluez').RegisterService(
-                self.service.get_path(),
-                {'ServiceInterface': 'org.bluez.GattService1'}
+            gatt_manager = dbus.Interface(
+                self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                'org.bluez.GattManager1'
+            )
+            
+            gatt_manager.RegisterApplication(
+                dbus.ObjectPath(self.service.path),
+                {}
             )
 
             logger.info("Service and characteristics registered successfully")
@@ -320,17 +384,22 @@ class BLEGATTServer:
                 logger.info("Development mode: Simulating advertising start")
                 return True
 
-            self.advertisement = self.bus.get_object('org.bluez', '/org/bluez/advertisement0')
-            ad_props = {
-                'org.bluez.LEAdvertisement1': {
-                    'Type': 'peripheral',
-                    'ServiceUUIDs': [ServiceDefinitions.CUSTOM_SERVICE_UUID],
-                    'IncludeTxPower': True
-                }
-            }
-            self.bus.get_object('org.bluez', '/org/bluez').RegisterAdvertisement(
-                self.advertisement,
-                ad_props
+            self.advertisement = Advertisement(
+                self.bus,
+                0,
+                'peripheral'
+            )
+            self.advertisement.service_uuids = [ServiceDefinitions.CUSTOM_SERVICE_UUID]
+            self.advertisement.include_tx_power = True
+
+            ad_manager = dbus.Interface(
+                self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                'org.bluez.LEAdvertisingManager1'
+            )
+            
+            ad_manager.RegisterAdvertisement(
+                dbus.ObjectPath(self.advertisement.path),
+                {}
             )
 
             logger.info("Started advertising GATT service")
@@ -348,8 +417,13 @@ class BLEGATTServer:
                 return True
 
             if self.advertisement:
-                self.bus.get_object('org.bluez', '/org/bluez').UnregisterAdvertisement(
-                    self.advertisement
+                ad_manager = dbus.Interface(
+                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                    'org.bluez.LEAdvertisingManager1'
+                )
+                
+                ad_manager.UnregisterAdvertisement(
+                    dbus.ObjectPath(self.advertisement.path)
                 )
                 self.advertisement = None
                 logger.info("Stopped advertising GATT service")
@@ -368,8 +442,13 @@ class BLEGATTServer:
                 return True
 
             if self.service:
-                self.bus.get_object('org.bluez', '/org/bluez').UnregisterService(
-                    self.service.get_path()
+                gatt_manager = dbus.Interface(
+                    self.bus.get_object('org.bluez', '/org/bluez/hci0'),
+                    'org.bluez.GattManager1'
+                )
+                
+                gatt_manager.UnregisterApplication(
+                    dbus.ObjectPath(self.service.path)
                 )
                 self.service = None
                 logger.info("Unregistered GATT service")
@@ -404,8 +483,12 @@ class BLEGATTServer:
                 self.adapter_props.Set(self.adapter_interface, 'Powered', True)
                 logger.info("Bluetooth adapter powered on")
 
-                self.register_service()
-                self.start_advertising()
+                if not self.register_service():
+                    raise BluetoothError("Failed to register service")
+                    
+                if not self.start_advertising():
+                    self.unregister_service()
+                    raise BluetoothError("Failed to start advertising")
             else:
                 logger.info("Development mode: Running mock server")
                 self.running = True
