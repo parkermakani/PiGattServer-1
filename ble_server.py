@@ -10,6 +10,7 @@ import time
 import threading
 from functools import wraps
 import json
+import subprocess
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -20,6 +21,10 @@ else:
 
 from service_definitions import ServiceDefinitions, CharacteristicProperties
 
+class BluetoothError(Exception):
+    """Custom exception for Bluetooth-related errors."""
+    pass
+
 class BLEGATTServer:
     def __init__(self):
         self.is_development = "REPL_ID" in os.environ
@@ -29,6 +34,30 @@ class BLEGATTServer:
         self.adapter_interface = 'org.bluez.Adapter1'
         self.status_update_thread = None
         self.running = False
+        self.max_retries = 5
+        self.base_delay = 1  # Base delay in seconds
+
+    def retry_with_backoff(self, func):
+        """Decorator for retry mechanism with exponential backoff."""
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = self.base_delay
+            last_exception = None
+            
+            for attempt in range(self.max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except dbus.exceptions.DBusException as e:
+                    last_exception = e
+                    if "org.bluez.Error.Busy" in str(e):
+                        logger.warning(f"Adapter busy, retrying in {delay} seconds (attempt {attempt + 1}/{self.max_retries})")
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                    else:
+                        raise
+            
+            raise last_exception
+        return wrapper
 
     def setup_dbus(self):
         """Initialize D-Bus connection and get Bluetooth adapter."""
@@ -46,24 +75,80 @@ class BLEGATTServer:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
             return False
 
-    def reset_adapter(self):
-        """Reset Bluetooth adapter."""
+    def force_reset_bluetooth(self):
+        """Force reset Bluetooth by stopping and starting the service."""
+        try:
+            if self.is_development:
+                logger.info("Development mode: Simulating force reset")
+                return True
+
+            # Stop any existing bluetoothd processes
+            subprocess.run(['pkill', 'bluetoothd'], check=False)
+            time.sleep(2)
+
+            # Restart bluetooth service
+            subprocess.run(['systemctl', 'restart', 'bluetooth'], check=True)
+            time.sleep(3)
+            
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to force reset Bluetooth: {str(e)}")
+            return False
+
+    @retry_with_backoff
+    def reset_adapter(self, force=False):
+        """Reset Bluetooth adapter with optional force reset."""
         try:
             if self.is_development:
                 logger.info("Development mode: Simulating adapter reset")
                 return True
 
+            if force:
+                logger.info("Performing force reset of Bluetooth adapter")
+                if not self.force_reset_bluetooth():
+                    raise BluetoothError("Force reset failed")
+
             adapter_interface = dbus.Interface(self.adapter, self.adapter_interface)
             
             # Power cycle the adapter
             self.adapter_props.Set(self.adapter_interface, 'Powered', False)
-            time.sleep(1)
+            time.sleep(2)
             self.adapter_props.Set(self.adapter_interface, 'Powered', True)
+            time.sleep(1)
             
             logger.info("Bluetooth adapter reset successfully")
             return True
         except Exception as e:
             logger.error(f"Failed to reset adapter: {str(e)}")
+            if not force and "org.bluez.Error.Busy" in str(e):
+                logger.info("Attempting force reset due to busy adapter")
+                return self.reset_adapter(force=True)
+            return False
+
+    @retry_with_backoff
+    def set_discoverable(self, enable=True, timeout=180):
+        """Enable or disable adapter discoverability with timeout."""
+        try:
+            if self.is_development:
+                logger.info(f"Development mode: {'Enabling' if enable else 'Disabling'} discoverability")
+                return True
+
+            if not self.adapter_props:
+                raise BluetoothError("Adapter not initialized")
+
+            current_state = bool(self.adapter_props.Get(self.adapter_interface, 'Discoverable'))
+            if current_state == enable:
+                logger.info(f"Adapter already {'discoverable' if enable else 'non-discoverable'}")
+                return True
+
+            self.adapter_props.Set(self.adapter_interface, 'Discoverable', enable)
+            if enable:
+                self.adapter_props.Set(self.adapter_interface, 'DiscoverableTimeout', dbus.UInt32(timeout))
+            
+            logger.info(f"Successfully {'enabled' if enable else 'disabled'} discoverability")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set discoverable mode: {str(e)}")
             return False
 
     def get_bluetooth_status(self):
@@ -75,6 +160,7 @@ class BLEGATTServer:
                     "powered": True,
                     "discovering": True,
                     "discoverable": True,
+                    "discoverable_timeout": 180,
                     "address": "00:00:00:00:00:00",
                     "name": "Mock Bluetooth Adapter"
                 }
@@ -84,6 +170,7 @@ class BLEGATTServer:
                 "powered": False,
                 "discovering": False,
                 "discoverable": False,
+                "discoverable_timeout": 0,
                 "address": "",
                 "name": ""
             }
@@ -92,6 +179,7 @@ class BLEGATTServer:
                 status["powered"] = bool(self.adapter_props.Get(self.adapter_interface, 'Powered'))
                 status["discovering"] = bool(self.adapter_props.Get(self.adapter_interface, 'Discovering'))
                 status["discoverable"] = bool(self.adapter_props.Get(self.adapter_interface, 'Discoverable'))
+                status["discoverable_timeout"] = int(self.adapter_props.Get(self.adapter_interface, 'DiscoverableTimeout'))
                 status["address"] = str(self.adapter_props.Get(self.adapter_interface, 'Address'))
                 status["name"] = str(self.adapter_props.Get(self.adapter_interface, 'Name'))
                 status["status"] = "active" if status["powered"] else "inactive"
@@ -138,6 +226,7 @@ class BLEGATTServer:
                 self.status_update_thread.join()
 
             if self.adapter and self.adapter_props:
+                self.set_discoverable(False)
                 self.adapter_props.Set(self.adapter_interface, 'Powered', False)
                 logger.info("Cleanup completed successfully")
         except Exception as e:
@@ -157,10 +246,11 @@ class BLEGATTServer:
 
             logger.info("D-Bus setup completed successfully")
 
-            # Power on the adapter
+            # Power on the adapter and set initial discoverable state
             if not self.is_development:
                 self.adapter_props.Set(self.adapter_interface, 'Powered', True)
-            logger.info("Bluetooth adapter powered on")
+                self.set_discoverable(True, 180)  # Enable discoverability for 3 minutes
+            logger.info("Bluetooth adapter powered on and configured")
 
             self.running = True
             self.start_status_updates()
