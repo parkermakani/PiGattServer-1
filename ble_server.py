@@ -307,7 +307,7 @@ class BLEGATTServer:
                         raise
 
         except Exception as e:
-            logger.error(f"Error during service registration: {str(e)}")
+            logger.error(f"Error during service registration: {str(e)}", exc_info=True)
             return False
 
     def _cleanup_service(self):
