@@ -1,5 +1,9 @@
 from enum import Enum
 import uuid
+import dbus
+import dbus.service
+from logger_config import logger  # Make sure logger is correctly imported
+from gi.repository import GLib
 
 class ServiceDefinitions:
     """Define BLE service and characteristic UUIDs and properties."""
