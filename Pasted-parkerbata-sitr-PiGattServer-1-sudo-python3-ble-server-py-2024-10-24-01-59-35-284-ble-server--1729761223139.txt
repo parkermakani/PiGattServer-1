@@ -1,0 +1,27 @@
+parkerbata@sitr:~/PiGattServer-1 $ sudo python3 ble_server.py
+2024-10-24 01:59:35,284 - ble_server - INFO - Using dbus-python implementation
+2024-10-24 01:59:35,408 - ble_server - INFO - Bluetooth service is already active.
+2024-10-24 01:59:35,415 - ble_server - INFO - Resetting Bluetooth adapter...
+2024-10-24 01:59:36,648 - ble_server - INFO - Bluetooth adapter reset successfully
+2024-10-24 01:59:36,648 - ble_server - INFO - D-Bus setup completed successfully
+2024-10-24 01:59:36,671 - ble_server - INFO - BlueZ configuration updated successfully
+2024-10-24 01:59:37,369 - ble_server - INFO - Bluetooth service restarted successfully
+2024-10-24 01:59:37,700 - ble_server - INFO - Added user root to bluetooth group
+2024-10-24 01:59:37,701 - ble_server - INFO - Bluetooth permissions and configuration setup completed successfully
+2024-10-24 01:59:37,735 - ble_server - INFO - Waiting for 2 seconds to allow BlueZ to stabilize...
+2024-10-24 01:59:39,737 - ble_server - INFO - Registered characteristic: temperature at /org/bluez/app/service0/char0
+2024-10-24 01:59:39,737 - ble_server - INFO - Registered characteristic: humidity at /org/bluez/app/service0/char1
+2024-10-24 01:59:39,738 - ble_server - INFO - Registered characteristic: status at /org/bluez/app/service0/char2
+2024-10-24 01:59:39,738 - ble_server - INFO - Registered characteristic: new_char at /org/bluez/app/service0/char3
+2024-10-24 01:59:39,741 - ble_server - ERROR - Failed to register application: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.80 was not provided by any .service files
+2024-10-24 01:59:39,742 - ble_server - ERROR - Failed to unregister advertisement: 'NoneType' object has no attribute 'get_path'
+2024-10-24 01:59:39,745 - ble_server - ERROR - Failed to unregister application: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.80 was not provided by any .service files
+2024-10-24 01:59:39,746 - ble_server - ERROR - Failed to unexport service: 'SystemBus' object has no attribute 'unexport'
+2024-10-24 01:59:39,746 - ble_server - ERROR - Error during service registration: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.80 was not provided by any .service files
+2024-10-24 01:59:39,747 - ble_server - ERROR - Unexpected error: Failed to register service
+2024-10-24 01:59:39,747 - ble_server - INFO - Performing adapter cleanup...
+2024-10-24 01:59:39,748 - ble_server - ERROR - Failed to unregister advertisement: 'NoneType' object has no attribute 'get_path'
+2024-10-24 01:59:39,751 - ble_server - ERROR - Failed to unregister application: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.80 was not provided by any .service files
+2024-10-24 01:59:39,752 - ble_server - ERROR - Failed to unexport service: 'SystemBus' object has no attribute 'unexport'
+2024-10-24 01:59:39,752 - ble_server - INFO - Cleanup completed successfully
+2024-10-24 01:59:39,752 - ble_server - INFO - GATT server stopped
