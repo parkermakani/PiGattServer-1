@@ -167,7 +167,7 @@ class Advertisement(dbus.service.Object):
     LEAdvertisement implementation using D-Bus.
     """
     def __init__(self, bus, index, advertising_type):
-        self.path = f'/org/bluez/example/advertisement{index}'
+        self.path = f'/org/bluez/app/advertisement{index}'
         self.bus = bus
         self.ad_type = advertising_type
         self.service_uuids = [ServiceDefinitions.CUSTOM_SERVICE_UUID]
@@ -232,6 +232,9 @@ class BLEGATTServer:
                 self.bus = MockMessageBus()
                 return True
 
+            # Ensure bluetoothd is running
+            self.ensure_bluetoothd_running()
+
             # Initialize D-Bus mainloop
             dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
             self.bus = dbus.SystemBus()
@@ -241,18 +244,17 @@ class BLEGATTServer:
             adapter_obj = self.bus.get_object('org.bluez', '/org/bluez/hci0')
             self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
             self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
-            
+
             # Initialize GattManager1 and LEAdvertisingManager1 interfaces
             self.gatt_manager = dbus.Interface(
                 adapter_obj,
                 'org.bluez.GattManager1'
             )
-            
             self.ad_manager = dbus.Interface(
                 adapter_obj,
                 'org.bluez.LEAdvertisingManager1'
             )
-            
+
             # Reset adapter
             self.reset_adapter()
             logger.info("D-Bus setup completed successfully")
@@ -261,6 +263,19 @@ class BLEGATTServer:
         except Exception as e:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
             return False
+
+    def ensure_bluetoothd_running(self):
+        """Ensure that bluetoothd service is running and restart if necessary."""
+        try:
+            # Check if bluetoothd is active
+            result = subprocess.run(['systemctl', 'is-active', 'bluetooth'], capture_output=True, text=True)
+            if "inactive" in result.stdout or result.returncode != 0:
+                logger.info("Bluetooth service is not active. Starting bluetoothd...")
+                subprocess.run(['sudo', 'systemctl', 'start', 'bluetooth'], check=True)
+            else:
+                logger.info("Bluetooth service is already active.")
+        except Exception as e:
+            logger.error(f"Error while checking or starting bluetoothd: {str(e)}")
 
     def reset_adapter(self):
         """Reset Bluetooth adapter with retry mechanism."""
@@ -288,18 +303,18 @@ class BLEGATTServer:
         try:
             logger.info("Performing force reset of Bluetooth adapter")
             services = ['bluetooth', 'bluetooth-mesh', 'bluealsa']
-            
+
             for service in services:
                 subprocess.run(['systemctl', 'stop', service], check=False)
-            
+
             time.sleep(2)
-            
+
             for service in services:
                 subprocess.run(['systemctl', 'restart', service], check=False)
-            
+
             time.sleep(5)
             return self.reset_adapter()
-            
+
         except Exception as e:
             logger.error(f"Failed to force reset adapter: {str(e)}")
             return False
@@ -379,12 +394,12 @@ class BLEGATTServer:
                     dbus.Dictionary({}, signature='sv')
                 )
                 logger.info("Service registered successfully")
-                
+
                 if not self.register_advertisement():
                     raise Exception("Failed to register advertisement")
-                    
+
                 return True
-                
+
             except dbus.exceptions.DBusException as e:
                 logger.error(f"Failed to register application: {str(e)}")
                 self._cleanup_service()
@@ -406,7 +421,7 @@ class BLEGATTServer:
             if hasattr(self, 'gatt_manager'):
                 try:
                     self.gatt_manager.UnregisterApplication(
-                        dbus.ObjectPath('/org/bluez/example')
+                        dbus.ObjectPath('/org/bluez/app')
                     )
                 except Exception as e:
                     logger.error(f"Failed to unregister application: {str(e)}")
@@ -437,8 +452,8 @@ class BLEGATTServer:
                 raise Exception("Bluetooth is not available")
 
             # Add a delay before registering the service to ensure BlueZ is ready
-            logger.info("Waiting for 5 seconds to allow BlueZ to stabilize...")
-            time.sleep(10)  # Adjust the duration if needed
+            logger.info("Waiting for 2 seconds to allow BlueZ to stabilize...")
+            time.sleep(2)  # Adjust the duration if needed
 
             if not self.register_service():
                 raise Exception("Failed to register service")
