@@ -239,27 +239,20 @@ class BLEGATTServer:
 
             # Initialize adapter and properties interface
             adapter_obj = self.bus.get_object('org.bluez', '/org/bluez/hci0')
-            if adapter_obj is None:
-                logger.error("adapter_obj is None, cannot proceed with interface initialization")
-                return False
-
             self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
             self.adapter_props = dbus.Interface(adapter_obj, 'org.freedesktop.DBus.Properties')
-
-            try:
-                # Initialize GattManager1 and LEAdvertisingManager1 interfaces
-                logger.info("Initializing GattManager1 interface...")
-                self.gatt_manager = dbus.Interface(adapter_obj, 'org.bluez.GattManager1')
-                logger.info("GattManager1 interface initialized successfully")
-
-                logger.info("Initializing LEAdvertisingManager1 interface...")
-                self.ad_manager = dbus.Interface(adapter_obj, 'org.bluez.LEAdvertisingManager1')
-                logger.info("LEAdvertisingManager1 interface initialized successfully")
-
-            except Exception as e:
-                logger.error(f"Initialization failed for interfaces: {str(e)}")
-                return False
-
+            
+            # Initialize GattManager1 and LEAdvertisingManager1 interfaces
+            self.gatt_manager = dbus.Interface(
+                adapter_obj,
+                'org.bluez.GattManager1'
+            )
+            
+            self.ad_manager = dbus.Interface(
+                adapter_obj,
+                'org.bluez.LEAdvertisingManager1'
+            )
+            
             # Reset adapter
             self.reset_adapter()
             logger.info("D-Bus setup completed successfully")
@@ -268,7 +261,7 @@ class BLEGATTServer:
         except Exception as e:
             logger.error(f"Failed to setup D-Bus: {str(e)}")
             return False
-            
+
     def reset_adapter(self):
         """Reset Bluetooth adapter with retry mechanism."""
         if self.is_development:
@@ -445,7 +438,7 @@ class BLEGATTServer:
 
             # Add a delay before registering the service to ensure BlueZ is ready
             logger.info("Waiting for 5 seconds to allow BlueZ to stabilize...")
-            time.sleep(5)  # Adjust the duration if needed
+            time.sleep(10)  # Adjust the duration if needed
 
             if not self.register_service():
                 raise Exception("Failed to register service")
