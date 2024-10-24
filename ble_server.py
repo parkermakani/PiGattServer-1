@@ -8,9 +8,9 @@ import dbus.mainloop.glib
 from gi.repository import GLib
 import time
 import threading
-from functools import wraps
 import json
 import subprocess
+from functools import wraps
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -216,7 +216,91 @@ class BLEGATTServer:
                 return self.reset_adapter(force=True)
             raise
 
-    # ... [rest of the code remains unchanged] ...
+    def run(self):
+        """Start the BLE GATT server."""
+        try:
+            # Check if Bluetooth is available
+            if not check_bluetooth_status():
+                raise BluetoothError("Bluetooth is not available")
+
+            # Setup D-Bus
+            if not self.setup_dbus():
+                raise BluetoothError("Failed to setup D-Bus")
+
+            # Reset Bluetooth adapter
+            logger.info("Resetting Bluetooth adapter...")
+            if not self.reset_adapter():
+                raise BluetoothError("Failed to reset adapter during setup")
+
+            # Initialize GLib mainloop
+            if not self.is_development:
+                self.mainloop = GLib.MainLoop()
+                self.running = True
+
+                # Start the mainloop in a separate thread
+                self.mainloop_thread = threading.Thread(target=self.mainloop.run)
+                self.mainloop_thread.daemon = True
+                self.mainloop_thread.start()
+
+                # Set adapter properties
+                self.adapter_props.Set(self.adapter_interface, 'Powered', True)
+                logger.info("Bluetooth adapter powered on")
+
+                # Register service and characteristics
+                self._register_service()
+                
+                # Start advertising
+                self._start_advertising()
+            else:
+                logger.info("Development mode: Running mock server")
+                self.running = True
+                while self.running:
+                    time.sleep(1)
+
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            self.cleanup()
+            raise
+
+    def cleanup(self):
+        """Clean up resources and stop the server."""
+        logger.info("Performing adapter cleanup...")
+        try:
+            if self.is_development:
+                logger.info("Development mode: Skipping cleanup")
+                return
+
+            self.running = False
+
+            # Stop advertising and unregister service
+            try:
+                if hasattr(self, '_stop_advertising'):
+                    self._stop_advertising()
+                if hasattr(self, '_unregister_service'):
+                    self._unregister_service()
+            except Exception as e:
+                logger.warning(f"Error during service cleanup: {str(e)}")
+
+            # Power down adapter
+            if self.adapter_props is not None:
+                try:
+                    self.adapter_props.Set(self.adapter_interface, 'Powered', False)
+                except Exception as e:
+                    logger.warning(f"Error powering down adapter: {str(e)}")
+
+            # Stop mainloop
+            if self.mainloop is not None and self.mainloop.is_running():
+                self.mainloop.quit()
+                if hasattr(self, 'mainloop_thread'):
+                    self.mainloop_thread.join(timeout=5)
+
+            logger.info("Cleanup completed successfully")
+            logger.info("GATT server stopped")
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+        finally:
+            self.running = False
 
 if __name__ == "__main__":
     server = BLEGATTServer()
@@ -226,5 +310,5 @@ if __name__ == "__main__":
         logger.info("Server shutdown requested")
         server.cleanup()
     except Exception as e:
-        logger.error(f"Server error: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
         server.cleanup()
