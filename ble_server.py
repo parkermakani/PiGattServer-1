@@ -375,7 +375,7 @@ class BLEGATTServer:
             # Register application and advertisement
             try:
                 self.gatt_manager.RegisterApplication(
-                    dbus.ObjectPath('/org/bluez/example'),
+                    dbus.ObjectPath('/org/bluez/app'),
                     dbus.Dictionary({}, signature='sv')
                 )
                 logger.info("Service registered successfully")
