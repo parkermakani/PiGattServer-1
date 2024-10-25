@@ -285,8 +285,13 @@ def cleanup(ad_manager, advertisement, service_manager, app):
         logger.error(f'Failed to unregister advertisement: {str(e)}')
 
     try:
-        # Unregister the GATT application if necessary
-        service_manager.UnregisterApplication(app.get_path())
+        # Remove all services from DBus manually before exiting
+        for service in app.services:
+            dbus.service.Object.remove_from_connection(service)
+            logger.info(f'Service unregistered: {service.get_path()}')
+
+        # Unregister the GATT application object itself
+        dbus.service.Object.remove_from_connection(app)
         logger.info('GATT application unregistered.')
     except Exception as e:
         logger.error(f'Failed to unregister GATT application: {str(e)}')
