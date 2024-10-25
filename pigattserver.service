@@ -1,0 +1,18 @@
+[Unit]
+Description=Raspberry Pi BLE GATT Server
+After=bluetooth.service
+Requires=bluetooth.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/pigattserver
+ExecStart=/usr/bin/python3 /opt/pigattserver/ble_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
