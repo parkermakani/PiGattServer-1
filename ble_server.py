@@ -160,6 +160,17 @@ class SITRCharacteristic(Characteristic):
             ['read', 'write'],
             service)
 
+def find_adapter(bus, adapter_pattern=None):
+    remote_om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, '/'), DBUS_OM_IFACE)
+    objects = remote_om.GetManagedObjects()
+
+    for path, interfaces in objects.items():
+        if GATT_MANAGER_IFACE not in interfaces:
+            continue
+        if adapter_pattern is None or path.endswith(adapter_pattern):
+            return bus.get_object(BLUEZ_SERVICE_NAME, path)
+    raise Exception('Bluetooth adapter not found')
+
 def main():
     logger = logging.getLogger('ble_server')
 
