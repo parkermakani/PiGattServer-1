@@ -35,28 +35,6 @@ class InvalidArgsException(dbus.exceptions.DBusException):
 class NotSupportedException(dbus.exceptions.DBusException):
     _dbus_error_name = 'org.bluez.Error.NotSupported'
 
-class Characteristic:
-    """Base characteristic class"""
-    def __init__(self, uuid, flags=['read']):
-        self.uuid = uuid
-        self.flags = flags
-        self.value = dbus.Array([], signature='y')  # 'y' indicates a byte array
-        self.path = None
-        self.service = None
-
-    def get_path(self):
-        return dbus.ObjectPath(self.path)
-
-    def get_properties(self):
-        return {
-            GATT_CHRC_IFACE: {
-                'Service': self.service.get_path(),
-                'UUID': self.uuid,
-                'Flags': self.flags,
-                'Value': dbus.Array(self.value, signature='y')
-            }
-        }
-
 class Service:
     """Base service class"""
     PATH_BASE = '/org/bluez/example/service'
@@ -66,10 +44,6 @@ class Service:
         self.primary = primary
         self.characteristics = []
         self.path = None
-        self._logger = logging.getLogger('ble_server')  # Add logger here
-
-    def get_path(self):
-        return dbus.ObjectPath(self.path)
 
     def get_properties(self):
         return {
@@ -82,26 +56,46 @@ class Service:
             }
         }
 
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
+
     def get_characteristic_paths(self):
         return [char.get_path() for char in self.characteristics]
 
     def add_characteristic(self, characteristic):
-        self._logger.debug(f'Adding characteristic to service: {self.path}')
+        logger.debug(f'Adding characteristic')
         self.characteristics.append(characteristic)
         characteristic.service = self
-        self._logger.debug(f'Characteristic added with path: {characteristic.get_path()}')
+        logger.debug(f'Characteristic added')
+
+class Characteristic:
+    """Base characteristic class"""
+    def __init__(self, uuid, flags=['read']):
+        self.uuid = uuid
+        self.flags = flags
+        self.value = dbus.Array([], signature='y')
+        self.path = None
+        self.service = None
+
+    def get_properties(self):
+        return {
+            GATT_CHRC_IFACE: {
+                'Service': self.service.get_path(),
+                'UUID': self.uuid,
+                'Flags': self.flags,
+                'Value': self.value
+            }
+        }
+
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
 
 class DBusService(dbus.service.Object, Service):
     """D-Bus enabled service"""
     def __init__(self, bus, index, uuid, primary=True):
-        # Initialize the base service first
         Service.__init__(self, uuid, primary)
-
-        # Set the path
-        self.path = f"{self.PATH_BASE}{index}"
-        logger.debug(f'Initializing service at path: {self.path}')
-
-        # Initialize the D-Bus object
+        self.path = self.PATH_BASE + str(index)
+        logger.debug(f'Service path: {self.path}')
         dbus.service.Object.__init__(self, bus, self.path)
 
     @dbus.service.method(DBUS_PROP_IFACE,
@@ -115,17 +109,11 @@ class DBusService(dbus.service.Object, Service):
 class DBusCharacteristic(dbus.service.Object, Characteristic):
     """D-Bus enabled characteristic"""
     def __init__(self, bus, index, uuid, flags, service):
-        # Initialize the base characteristic first
         Characteristic.__init__(self, uuid, flags)
-
-        # Set the path using the service's path
         self.service = service
-        self.path = f"{service.get_path()}/char{index}"
-
-        # Initialize the D-Bus object
+        self.path = service.get_path() + '/char' + str(index)
+        logger.debug(f'Characteristic path: {self.path}')
         dbus.service.Object.__init__(self, bus, self.path)
-
-        logger.debug(f'Initializing characteristic at path: {self.path}')
 
     @dbus.service.method(DBUS_PROP_IFACE,
                         in_signature='s',
@@ -153,18 +141,20 @@ class SITRCharacteristic(DBusCharacteristic):
     SITR_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
     def __init__(self, bus, index, service):
-        logger.debug(f'Creating SITR characteristic for service: {service.get_path()}')
-        super().__init__(bus, index, self.SITR_CHARACTERISTIC_UUID, ['read', 'write'], service)
-
+        logger.debug('Initializing SITR characteristic')
+        super().__init__(
+            bus, index,
+            self.SITR_CHARACTERISTIC_UUID,
+            ['read', 'write'],
+            service)
 
 class SITRService(DBusService):
     """SITR specific service"""
     SITR_UUID = '12345678-1234-5678-1234-56789abcdef0'
 
     def __init__(self, bus, index):
-        logger.debug('Creating SITR service')
+        logger.debug('Initializing SITR service')
         super().__init__(bus, index, self.SITR_UUID, True)
-        logger.debug(f'Creating SITR characteristic for service at {self.get_path()}')
         self.add_characteristic(SITRCharacteristic(bus, 0, self))
 
 class Application(dbus.service.Object):
@@ -177,8 +167,9 @@ class Application(dbus.service.Object):
         return dbus.ObjectPath(self.path)
 
     def add_service(self, service):
-        logger.debug(f'Adding service: {service.get_path()}')
+        logger.debug(f'Adding service')
         self.services.append(service)
+        logger.debug('Service added')
 
     @dbus.service.method(DBUS_OM_IFACE,
                         out_signature='a{oa{sa{sv}}}')
@@ -225,7 +216,6 @@ def find_adapter(bus):
         if GATT_MANAGER_IFACE in interfaces:
             return bus.get_object(BLUEZ_SERVICE_NAME, path)
 
-    logger.error('Bluetooth adapter not found')
     raise Exception('Bluetooth adapter not found')
 
 def main():
@@ -247,6 +237,8 @@ def main():
         logger.debug('Creating advertisement and GATT application.')
         advertisement = Advertisement(bus, 0, 'peripheral')
         app = Application(bus)
+
+        # Create and add service
         app.add_service(SITRService(bus, 0))
 
         mainloop = GLib.MainLoop()
@@ -255,18 +247,15 @@ def main():
         ad_manager.RegisterAdvertisement(
             advertisement.get_path(), {},
             reply_handler=lambda: logger.info('Advertisement registered'),
-            error_handler=lambda error: logger.error(f'Failed to register advertisement: {str(error)}')
-        )
+            error_handler=lambda error: logger.error(f'Failed to register advertisement: {str(error)}'))
 
         logger.debug('Registering application...')
         service_manager.RegisterApplication(
             app.get_path(), {},
             reply_handler=lambda: logger.info('Application registered'),
-            error_handler=lambda error: logger.error(f'Failed to register application: {str(error)}')
-        )
+            error_handler=lambda error: logger.error(f'Failed to register application: {str(error)}'))
 
         logger.info('GATT server is running. Press Ctrl+C to stop.')
-
         mainloop.run()
 
     except KeyboardInterrupt:
