@@ -135,7 +135,7 @@ class GattService(dbus.service.Object):
 
     def __init__(self, bus, index, uuid):
         logger.debug(f"Initializing GATT service with index {index} and UUID {uuid}")
-        self.path = f'/org/bluez/pigattserver/service{index}'
+        self.path = f'/org/bluez/pigattserver/pigattserver{index}'
         self.uuid = uuid
         self.bus = bus
         self.characteristics = []
