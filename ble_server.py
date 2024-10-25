@@ -42,167 +42,166 @@ def setup_logging():
 
     return logger
 
-class BLEGATTServer(dbus.service.Object):
-    """
-    BLE GATT Server implementation
-    """
-    BLUEZ_SERVICE_NAME = 'org.bluez'
-    GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
-    LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
+class GATTCharacteristic(dbus.service.Object):
+    def __init__(self, bus, index, uuid, flags, service):
+        self.path = service.path + '/char' + str(index)
+        self.bus = bus
+        self.uuid = uuid
+        self.service = service
+        self.flags = flags
+        dbus.service.Object.__init__(self, bus, self.path)
 
-    def __init__(self, bus, adapter_name, logger):
-        self.logger = logger
-        self.adapter_name = adapter_name
-        self.path = '/org/bluez/example/service'  # Base path for the service
-        self.services = []  # List to keep track of services
-        self.next_index = 0  # For generating unique paths
+    def get_properties(self):
+        return {
+            'org.bluez.GattCharacteristic1': {
+                'Service': self.service.get_path(),
+                'UUID': self.uuid,
+                'Flags': self.flags,
+            }
+        }
 
-        self.logger.info(f"Initializing BLE GATT Server with adapter: {adapter_name}")
+    @dbus.service.method('org.freedesktop.DBus.Properties',
+                        in_signature='s', out_signature='a{sv}')
+    def GetAll(self, interface):
+        if interface != 'org.bluez.GattCharacteristic1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArgs',
+                'Interface {} not supported'.format(interface))
+        return self.get_properties()['org.bluez.GattCharacteristic1']
 
-        # Initialize the D-Bus service object
-        super().__init__(bus, self.path)
+class GATTService(dbus.service.Object):
+    PATH_BASE = '/org/bluez/example/service'
 
-        self._setup_dbus()
+    def __init__(self, bus, index, uuid, primary):
+        self.path = self.PATH_BASE + str(index)
+        self.bus = bus
+        self.uuid = uuid
+        self.primary = primary
+        self.characteristics = []
+        dbus.service.Object.__init__(self, bus, self.path)
+
+    def get_properties(self):
+        return {
+            'org.bluez.GattService1': {
+                'UUID': self.uuid,
+                'Primary': self.primary,
+                'Characteristics': dbus.Array(
+                    self.get_characteristic_paths(),
+                    signature='o')
+            }
+        }
 
     def get_path(self):
-        """Return the D-Bus path of the service"""
         return dbus.ObjectPath(self.path)
 
-    def get_next_path(self):
-        """Generate unique paths for characteristics and services"""
-        path = f"{self.path}/service{self.next_index}"
-        self.next_index += 1
-        return dbus.ObjectPath(path)
+    def add_characteristic(self, characteristic):
+        self.characteristics.append(characteristic)
 
-    def _setup_dbus(self):
-        """Initialize D-Bus interface and setup required services"""
-        try:
-            self.logger.debug("Setting up D-Bus interfaces")
+    def get_characteristic_paths(self):
+        result = []
+        for chrc in self.characteristics:
+            result.append(chrc.get_path())
+        return result
 
-            # Get the system bus
-            self.bus = dbus.SystemBus()
-            self.logger.debug("Successfully connected to system bus")
-
-            # Get the BLE controller
-            adapter_path = f'/org/bluez/{self.adapter_name}'
-            self.logger.debug(f"Attempting to get adapter at path: {adapter_path}")
-
-            adapter = self.bus.get_object(self.BLUEZ_SERVICE_NAME, adapter_path)
-            adapter_props = dbus.Interface(adapter, 'org.freedesktop.DBus.Properties')
-
-            # Power on the adapter if it's not already
-            powered = adapter_props.Get('org.bluez.Adapter1', 'Powered')
-            self.logger.info(f"Current adapter power state: {'On' if powered else 'Off'}")
-
-            if not powered:
-                self.logger.info("Powering on Bluetooth adapter")
-                adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
-                self.logger.info("Bluetooth adapter powered on successfully")
-
-            # Set up advertisement and GATT manager
-            self.logger.debug("Setting up advertisement manager")
-            self.ad_manager = dbus.Interface(
-                adapter, 
-                self.LE_ADVERTISING_MANAGER_IFACE
-            )
-
-            self.logger.debug("Setting up GATT manager")
-            self.service_manager = dbus.Interface(
-                adapter,
-                self.GATT_MANAGER_IFACE
-            )
-
-            self.logger.info("D-Bus setup completed successfully")
-
-        except dbus.exceptions.DBusException as e:
-            self.logger.error(f"D-Bus setup failed: {str(e)}")
-            self.logger.debug(f"D-Bus exception details: {type(e).__name__}", exc_info=True)
-            raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error during D-Bus setup: {str(e)}")
-            self.logger.debug("Exception details:", exc_info=True)
-            raise
-
-    @dbus.service.method(dbus.PROPERTIES_IFACE,
+    @dbus.service.method('org.freedesktop.DBus.Properties',
                         in_signature='s',
                         out_signature='a{sv}')
     def GetAll(self, interface):
-        """Get all properties for the specified interface"""
-        self.logger.debug(f"GetAll called for interface: {interface}")
-        return {}
+        if interface != 'org.bluez.GattService1':
+            raise dbus.exceptions.DBusException(
+                'org.bluez.Error.InvalidArgs',
+                'Interface {} not supported'.format(interface))
+        return self.get_properties()['org.bluez.GattService1']
+
+class BLEGATTServer(dbus.service.Object):
+    def __init__(self, bus, adapter_name, logger):
+        self.path = '/org/bluez/example'
+        self.logger = logger
+        self.services = []
+        self.adapter_name = adapter_name
+        self.bus = bus
+        super().__init__(bus, self.path)
+
+        self._setup_dbus()
+        self._add_service()
+
+    def _add_service(self):
+        """Add a test service"""
+        service = GATTService(self.bus, 0, 
+                            '12345678-1234-5678-1234-56789abcdef0', True)
+        self.services.append(service)
+
+        # Add a test characteristic
+        char = GATTCharacteristic(self.bus, 0,
+                                '12345678-1234-5678-1234-56789abcdef1',
+                                ['read', 'write'], service)
+        service.add_characteristic(char)
+
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
+
+    def _setup_dbus(self):
+        try:
+            self.logger.debug("Setting up D-Bus interfaces")
+            adapter_path = f'/org/bluez/{self.adapter_name}'
+            adapter = self.bus.get_object('org.bluez', adapter_path)
+
+            adapter_props = dbus.Interface(adapter, 'org.freedesktop.DBus.Properties')
+
+            if not adapter_props.Get('org.bluez.Adapter1', 'Powered'):
+                adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
+
+            self.ad_manager = dbus.Interface(adapter, 'org.bluez.LEAdvertisingManager1')
+            self.service_manager = dbus.Interface(adapter, 'org.bluez.GattManager1')
+
+        except dbus.exceptions.DBusException as e:
+            self.logger.error(f"D-Bus setup failed: {str(e)}")
+            raise
+
+    @dbus.service.method('org.freedesktop.DBus.ObjectManager',
+                        out_signature='a{oa{sa{sv}}}')
+    def GetManagedObjects(self):
+        response = {}
+        for service in self.services:
+            response[service.get_path()] = service.get_properties()
+            chrcs = service.get_characteristic_paths()
+            for chrc in chrcs:
+                response[chrc] = service.characteristics[0].get_properties()
+        return response
 
     def start(self):
-        """Start the GATT server"""
         try:
             self.logger.info("Starting GATT server")
-
-            # Register GATT services
-            self.logger.debug("Registering GATT application")
             self.service_manager.RegisterApplication(self.get_path(), {})
             self.logger.info("GATT application registered successfully")
 
-            # Start advertising
-            self.logger.debug("Registering advertisement")
-            self.ad_manager.RegisterAdvertisement(self.get_path(), {})
-            self.logger.info("Advertisement registered successfully")
-
         except dbus.exceptions.DBusException as e:
             self.logger.error(f"Failed to start GATT server: {str(e)}")
-            self.logger.debug("D-Bus exception details:", exc_info=True)
-            raise
-        except Exception as e:
-            self.logger.error(f"Unexpected error while starting GATT server: {str(e)}")
-            self.logger.debug("Exception details:", exc_info=True)
             raise
 
     def stop(self):
-        """Stop the GATT server"""
         try:
             self.logger.info("Stopping GATT server")
-
-            self.logger.debug("Unregistering advertisement")
-            self.ad_manager.UnregisterAdvertisement(self.get_path())
-            self.logger.info("Advertisement unregistered successfully")
-
-            self.logger.debug("Unregistering GATT application")
             self.service_manager.UnregisterApplication(self.get_path())
             self.logger.info("GATT application unregistered successfully")
 
         except dbus.exceptions.DBusException as e:
             self.logger.error(f"Failed to stop GATT server: {str(e)}")
-            self.logger.debug("D-Bus exception details:", exc_info=True)
-        except Exception as e:
-            self.logger.error(f"Unexpected error while stopping GATT server: {str(e)}")
-            self.logger.debug("Exception details:", exc_info=True)
 
 def main():
-    # Initialize logging
     logger = setup_logging()
     logger.info("Starting BLE GATT Server application")
 
     try:
-        # Initialize the DBus mainloop
-        logger.debug("Initializing D-Bus main loop")
         dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-
-        # Get the system bus
-        logger.debug("Connecting to system bus")
         bus = dbus.SystemBus()
-
-        # Find the first available Bluetooth adapter
         adapter_name = 'hci0'
-        logger.info(f"Using Bluetooth adapter: {adapter_name}")
 
-        # Create and initialize the GATT server
         server = BLEGATTServer(bus, adapter_name, logger)
         server.start()
-        logger.info("BLE GATT Server initialized and started successfully")
 
-        # Start the main loop
-        logger.debug("Starting main event loop")
         mainloop = GLib.MainLoop()
 
-        # Set up signal handlers
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}")
             server.stop()
