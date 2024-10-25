@@ -18,7 +18,8 @@ def install_service():
             'utils.py',
             'logger_config.py',
             'mock_dbus.py',
-            'bluez-config.conf'
+            'bluez-config.conf',
+            'setup_bluetooth.py'  # Added setup_bluetooth.py to the list
         ]
         
         # Copy files to installation directory
@@ -26,6 +27,9 @@ def install_service():
             if os.path.exists(file):
                 shutil.copy2(file, os.path.join(install_dir, file))
                 logger.info(f"Copied {file} to {install_dir}")
+            else:
+                logger.error(f"Required file {file} not found")
+                return False
         
         # Copy and install systemd service file
         service_file = 'pigattserver.service'
@@ -33,6 +37,9 @@ def install_service():
         if os.path.exists(service_file):
             shutil.copy2(service_file, os.path.join(systemd_dir, service_file))
             logger.info(f"Installed {service_file} to {systemd_dir}")
+        else:
+            logger.error(f"Required file {service_file} not found")
+            return False
 
         # Install D-Bus configuration file
         dbus_conf_file = 'org.bluez.pigattserver.conf'
@@ -58,6 +65,9 @@ def install_service():
             logger.info("Started pigattserver service")
             
             return True
+        else:
+            logger.error(f"Required file {dbus_conf_file} not found")
+            return False
             
     except Exception as e:
         logger.error(f"Error installing service: {str(e)}")
