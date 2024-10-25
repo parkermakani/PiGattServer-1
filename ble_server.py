@@ -18,6 +18,7 @@ DBUS_PROP_IFACE = 'org.freedesktop.DBus.Properties'
 GATT_SERVICE_IFACE = 'org.bluez.GattService1'
 GATT_CHRC_IFACE = 'org.bluez.GattCharacteristic1'
 LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
+BASE_PATH = '/org/bluez/pigattserver'
 
 # Set up logging
 logger = logging.getLogger('ble_server')
@@ -35,17 +36,20 @@ class InvalidArgsException(dbus.exceptions.DBusException):
 class NotSupportedException(dbus.exceptions.DBusException):
     _dbus_error_name = 'org.bluez.Error.NotSupported'
 
-class Service:
-    """Base service class"""
-    PATH_BASE = '/org/bluez/example/service'
-
-    def __init__(self, uuid, primary=True):
+class BLEService(dbus.service.Object):
+    """Base BLE service class with D-Bus support"""
+    
+    def __init__(self, bus, index, uuid, primary=True):
+        self.bus = bus
         self.uuid = uuid
         self.primary = primary
         self.characteristics = []
-        self.path = None
+        self.path = f'{BASE_PATH}/service{index}'
+        logger.debug(f'Service path: {self.path}')
+        super().__init__(bus, self.path)
 
     def get_properties(self):
+        """Get the D-Bus properties for this service"""
         return {
             GATT_SERVICE_IFACE: {
                 'UUID': self.uuid,
@@ -57,68 +61,64 @@ class Service:
         }
 
     def get_path(self):
+        """Get the D-Bus object path"""
         return dbus.ObjectPath(self.path)
 
     def get_characteristic_paths(self):
+        """Get the D-Bus object paths of all characteristics"""
         return [char.get_path() for char in self.characteristics]
 
     def add_characteristic(self, characteristic):
-        logger.debug(f'Adding characteristic')
+        """Add a characteristic to this service"""
+        logger.debug('Adding characteristic')
         self.characteristics.append(characteristic)
         characteristic.service = self
-        logger.debug(f'Characteristic added')
+        logger.debug('Characteristic added')
 
-class Characteristic:
-    """Base characteristic class"""
-    def __init__(self, uuid, flags=['read']):
+    @dbus.service.method(DBUS_PROP_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        """Get all D-Bus properties for the specified interface"""
+        if interface != GATT_SERVICE_IFACE:
+            raise InvalidArgsException()
+        return self.get_properties()[GATT_SERVICE_IFACE]
+
+class BLECharacteristic(dbus.service.Object):
+    """Base BLE characteristic class with D-Bus support"""
+    
+    def __init__(self, bus, index, uuid, flags, service):
+        self.bus = bus
         self.uuid = uuid
+        self.service = service
         self.flags = flags
+        self.notifying = False
         self.value = dbus.Array([], signature='y')
-        self.path = None
-        self.service = None
+        self.path = f'{service.path}/char{index}'
+        logger.debug(f'Characteristic path: {self.path}')
+        super().__init__(bus, self.path)
 
     def get_properties(self):
+        """Get the D-Bus properties for this characteristic"""
         return {
             GATT_CHRC_IFACE: {
                 'Service': self.service.get_path(),
                 'UUID': self.uuid,
                 'Flags': self.flags,
-                'Value': self.value
+                'Value': self.value,
+                'Notifying': dbus.Boolean(self.notifying)
             }
         }
 
     def get_path(self):
+        """Get the D-Bus object path"""
         return dbus.ObjectPath(self.path)
 
-class DBusService(dbus.service.Object, Service):
-    """D-Bus enabled service"""
-    def __init__(self, bus, index, uuid, primary=True):
-        Service.__init__(self, uuid, primary)
-        self.path = self.PATH_BASE + str(index)
-        logger.debug(f'Service path: {self.path}')
-        dbus.service.Object.__init__(self, bus, self.path)
-
     @dbus.service.method(DBUS_PROP_IFACE,
                         in_signature='s',
                         out_signature='a{sv}')
     def GetAll(self, interface):
-        if interface != GATT_SERVICE_IFACE:
-            raise InvalidArgsException()
-        return self.get_properties()[GATT_SERVICE_IFACE]
-
-class DBusCharacteristic(dbus.service.Object, Characteristic):
-    """D-Bus enabled characteristic"""
-    def __init__(self, bus, index, uuid, flags, service):
-        Characteristic.__init__(self, uuid, flags)
-        self.service = service
-        self.path = service.get_path() + '/char' + str(index)
-        logger.debug(f'Characteristic path: {self.path}')
-        dbus.service.Object.__init__(self, bus, self.path)
-
-    @dbus.service.method(DBUS_PROP_IFACE,
-                        in_signature='s',
-                        out_signature='a{sv}')
-    def GetAll(self, interface):
+        """Get all D-Bus properties for the specified interface"""
         if interface != GATT_CHRC_IFACE:
             raise InvalidArgsException()
         return self.get_properties()[GATT_CHRC_IFACE]
@@ -127,16 +127,32 @@ class DBusCharacteristic(dbus.service.Object, Characteristic):
                         in_signature='ay',
                         out_signature='ay')
     def ReadValue(self, options):
+        """Read the characteristic value"""
         logger.debug('ReadValue called')
         return self.value
 
     @dbus.service.method(GATT_CHRC_IFACE,
                         in_signature='aya{sv}')
     def WriteValue(self, value, options):
+        """Write the characteristic value"""
         logger.debug(f'WriteValue called with: {bytes(value)}')
         self.value = value
 
-class SITRCharacteristic(DBusCharacteristic):
+    @dbus.service.method(GATT_CHRC_IFACE)
+    def StartNotify(self):
+        """Start notifications for this characteristic"""
+        if not self.notifying:
+            self.notifying = True
+            logger.debug('Notifications enabled')
+
+    @dbus.service.method(GATT_CHRC_IFACE)
+    def StopNotify(self):
+        """Stop notifications for this characteristic"""
+        if self.notifying:
+            self.notifying = False
+            logger.debug('Notifications disabled')
+
+class SITRCharacteristic(BLECharacteristic):
     """SITR specific characteristic"""
     SITR_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
@@ -145,10 +161,10 @@ class SITRCharacteristic(DBusCharacteristic):
         super().__init__(
             bus, index,
             self.SITR_CHARACTERISTIC_UUID,
-            ['read', 'write'],
+            ['read', 'write', 'notify'],
             service)
 
-class SITRService(DBusService):
+class SITRService(BLEService):
     """SITR specific service"""
     SITR_UUID = '12345678-1234-5678-1234-56789abcdef0'
 
@@ -158,8 +174,10 @@ class SITRService(DBusService):
         self.add_characteristic(SITRCharacteristic(bus, 0, self))
 
 class Application(dbus.service.Object):
+    """BLE GATT Application"""
+    
     def __init__(self, bus):
-        self.path = '/org/bluez/example'
+        self.path = f'{BASE_PATH}'
         self.services = []
         super().__init__(bus, self.path)
 
@@ -167,7 +185,7 @@ class Application(dbus.service.Object):
         return dbus.ObjectPath(self.path)
 
     def add_service(self, service):
-        logger.debug(f'Adding service')
+        logger.debug('Adding service')
         self.services.append(service)
         logger.debug('Service added')
 
@@ -182,8 +200,10 @@ class Application(dbus.service.Object):
         return response
 
 class Advertisement(dbus.service.Object):
+    """BLE Advertisement"""
+    
     def __init__(self, bus, index, advertising_type):
-        self.path = f'/org/bluez/example/advertisement{index}'
+        self.path = f'{BASE_PATH}/advertisement{index}'
         self.bus = bus
         self.ad_type = advertising_type
         self.local_name = 'SITR Device'
@@ -208,6 +228,7 @@ class Advertisement(dbus.service.Object):
         return self.get_properties()[LE_ADVERTISING_MANAGER_IFACE]
 
 def find_adapter(bus):
+    """Find the Bluetooth adapter"""
     remote_om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, '/'),
                               DBUS_OM_IFACE)
     objects = remote_om.GetManagedObjects()
