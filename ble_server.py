@@ -1,6 +1,39 @@
 #!/usr/bin/env python3
 
-# ... (keep your existing imports and constants)
+import dbus
+import dbus.exceptions
+import dbus.mainloop.glib
+import dbus.service
+import logging
+import sys
+import os
+from datetime import datetime
+from gi.repository import GLib
+
+# Constants
+BLUEZ_SERVICE_NAME = 'org.bluez'
+GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
+DBUS_OM_IFACE = 'org.freedesktop.DBus.ObjectManager'
+DBUS_PROP_IFACE = 'org.freedesktop.DBus.Properties'
+GATT_SERVICE_IFACE = 'org.bluez.GattService1'
+GATT_CHRC_IFACE = 'org.bluez.GattCharacteristic1'
+LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
+
+# Set up logging
+logger = logging.getLogger('ble_server')
+logger.setLevel(logging.DEBUG)
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s', 
+                            datefmt='%Y-%m-%d %H:%M:%S')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+
+class InvalidArgsException(dbus.exceptions.DBusException):
+    _dbus_error_name = 'org.freedesktop.DBus.Error.InvalidArgs'
+
+class NotSupportedException(dbus.exceptions.DBusException):
+    _dbus_error_name = 'org.bluez.Error.NotSupported'
 
 class Characteristic:
     """Base characteristic class"""
@@ -154,4 +187,92 @@ class Application(dbus.service.Object):
                 response[char.get_path()] = char.get_properties()
         return response
 
-# ... (keep your existing Advertisement class and main function)
+class Advertisement(dbus.service.Object):
+    def __init__(self, bus, index, advertising_type):
+        self.path = f'/org/bluez/example/advertisement{index}'
+        self.bus = bus
+        self.ad_type = advertising_type
+        self.local_name = 'SITR Device'
+        super().__init__(bus, self.path)
+
+    def get_path(self):
+        return dbus.ObjectPath(self.path)
+
+    def get_properties(self):
+        properties = dict()
+        properties['Type'] = self.ad_type
+        if self.local_name:
+            properties['LocalName'] = dbus.String(self.local_name)
+        return {LE_ADVERTISING_MANAGER_IFACE: properties}
+
+    @dbus.service.method(DBUS_PROP_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        if interface != LE_ADVERTISING_MANAGER_IFACE:
+            raise InvalidArgsException()
+        return self.get_properties()[LE_ADVERTISING_MANAGER_IFACE]
+
+def find_adapter(bus):
+    remote_om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, '/'),
+                              DBUS_OM_IFACE)
+    objects = remote_om.GetManagedObjects()
+
+    for path, interfaces in objects.items():
+        if GATT_MANAGER_IFACE in interfaces:
+            return bus.get_object(BLUEZ_SERVICE_NAME, path)
+
+    logger.error('Bluetooth adapter not found')
+    raise Exception('Bluetooth adapter not found')
+
+def main():
+    try:
+        logger.debug('Setting up DBus main loop.')
+        dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+
+        logger.debug('Connecting to system bus.')
+        bus = dbus.SystemBus()
+
+        logger.debug('Finding BLE adapter...')
+        adapter = find_adapter(bus)
+        logger.debug('BLE adapter found.')
+
+        logger.debug('Creating service manager and advertisement manager interfaces.')
+        service_manager = dbus.Interface(adapter, GATT_MANAGER_IFACE)
+        ad_manager = dbus.Interface(adapter, LE_ADVERTISING_MANAGER_IFACE)
+
+        logger.debug('Creating advertisement and GATT application.')
+        advertisement = Advertisement(bus, 0, 'peripheral')
+        app = Application(bus)
+        app.add_service(SITRService(bus, 0))
+
+        mainloop = GLib.MainLoop()
+
+        logger.debug('Registering advertisement...')
+        ad_manager.RegisterAdvertisement(
+            advertisement.get_path(), {},
+            error_handler=lambda error: logger.error(f'Failed to register advertisement: {str(error)}'))
+        logger.info('Advertisement registered')
+
+        logger.debug('Registering application...')
+        service_manager.RegisterApplication(
+            app.get_path(), {},
+            error_handler=lambda error: logger.error(f'Failed to register application: {str(error)}'))
+        logger.info('Application registered')
+
+        logger.info('GATT server is running. Press Ctrl+C to stop.')
+
+        mainloop.run()
+
+    except KeyboardInterrupt:
+        logger.info('Shutting down...')
+        ad_manager.UnregisterAdvertisement(advertisement.get_path())
+        logger.info('Advertisement unregistered')
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f'Fatal error: {str(e)}')
+        logger.debug('Exception details:', exc_info=True)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
