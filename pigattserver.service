@@ -8,6 +8,10 @@ Type=simple
 User=root
 Group=root
 Environment=DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=/bin/mkdir -p /var/log/pigattserver
+ExecStartPre=/bin/chown root:root /var/log/pigattserver
+ExecStartPre=/bin/chmod 755 /var/log/pigattserver
 ExecStart=/usr/bin/python3 /home/parkerbata/PiGattServer-1/ble_server.py
 Restart=on-failure
 RestartSec=5
