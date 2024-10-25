@@ -267,13 +267,29 @@ def main():
         mainloop = GLib.MainLoop()
         mainloop.run()
     except KeyboardInterrupt:
-        logger.info('Shutting down GATT server')
-        ad_manager.UnregisterAdvertisement(advertisement.get_path())
-        logger.info('Advertisement unregistered')
+        logger.info('Shutting down GATT server...')
+        cleanup(ad_manager, advertisement, service_manager, app)
+        logger.info('GATT server shut down.')
         sys.exit(0)
     except Exception as e:
         logger.error(f'Unexpected error: {str(e)}')
+        cleanup(ad_manager, advertisement, service_manager, app)
         sys.exit(1)
+
+def cleanup(ad_manager, advertisement, service_manager, app):
+    logger.debug('Cleaning up resources...')
+    try:
+        ad_manager.UnregisterAdvertisement(advertisement.get_path())
+        logger.info('Advertisement unregistered.')
+    except Exception as e:
+        logger.error(f'Failed to unregister advertisement: {str(e)}')
+
+    try:
+        # Unregister the GATT application if necessary
+        service_manager.UnregisterApplication(app.get_path())
+        logger.info('GATT application unregistered.')
+    except Exception as e:
+        logger.error(f'Failed to unregister GATT application: {str(e)}')
 
 if __name__ == '__main__':
     main()
