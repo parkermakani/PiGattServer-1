@@ -82,6 +82,7 @@ class Advertisement(dbus.service.Object):
 
 class Application(dbus.service.Object):
     def __init__(self, bus):
+        self.bus = bus  # Store the bus in the object
         self.path = '/org/bluez/example/app'
         self.services = []
         dbus.service.Object.__init__(self, bus, self.path)
