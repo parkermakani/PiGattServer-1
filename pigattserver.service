@@ -3,25 +3,26 @@ Description=Raspberry Pi BLE GATT Server
 After=bluetooth.service dbus.service network.target
 Requires=bluetooth.service dbus.service
 PartOf=bluetooth.service
-StartLimitIntervalSec=500
-StartLimitBurst=3
+StartLimitIntervalSec=600
+StartLimitBurst=2
 
 [Service]
 Type=simple
 User=root
 Group=root
 WorkingDirectory=/opt/pigattserver
-ExecStartPre=/bin/sleep 2
+ExecStartPre=/bin/sleep 5
 ExecStart=/usr/bin/python3 /opt/pigattserver/ble_server.py
-ExecStopPost=/bin/sleep 10
+ExecStopPost=/bin/sleep 15
 Restart=on-failure
-RestartSec=60
+RestartSec=120
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=60
-TimeoutStopSec=30
+TimeoutStartSec=90
+TimeoutStopSec=45
 KillMode=mixed
 KillSignal=SIGTERM
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=bluetooth.target
