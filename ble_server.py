@@ -149,11 +149,8 @@ class SITRCharacteristic(DBusCharacteristic):
     SITR_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
     def __init__(self, bus, index, service):
-        super().__init__(
-            bus, index,
-            self.SITR_CHARACTERISTIC_UUID,
-            ['read', 'write'],
-            service)
+        super().__init__(bus, index, self.SITR_CHARACTERISTIC_UUID, ['read', 'write'], service)
+
 
 class SITRService(DBusService):
     """SITR specific service"""
