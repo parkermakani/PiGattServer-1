@@ -2,6 +2,7 @@
 import os
 import shutil
 import subprocess
+import time
 from logger_config import logger
 
 def install_service():
@@ -19,7 +20,7 @@ def install_service():
             'logger_config.py',
             'mock_dbus.py',
             'bluez-config.conf',
-            'setup_bluetooth.py'  # Added setup_bluetooth.py to the list
+            'setup_bluetooth.py'
         ]
         
         # Copy files to installation directory
@@ -30,6 +31,10 @@ def install_service():
             else:
                 logger.error(f"Required file {file} not found")
                 return False
+        
+        # Set proper permissions
+        subprocess.run(['chown', '-R', 'root:root', install_dir], check=True)
+        subprocess.run(['chmod', '-R', '755', install_dir], check=True)
         
         # Copy and install systemd service file
         service_file = 'pigattserver.service'
@@ -49,17 +54,24 @@ def install_service():
             shutil.copy2(dbus_conf_file, os.path.join(dbus_conf_dir, dbus_conf_file))
             logger.info(f"Installed {dbus_conf_file} to {dbus_conf_dir}")
             
+            # Stop the service if it's running
+            subprocess.run(['systemctl', 'stop', 'pigattserver'], check=False)
+            time.sleep(2)
+            
             # Reload D-Bus configuration
             subprocess.run(['systemctl', 'reload', 'dbus'], check=True)
             logger.info("Reloaded D-Bus configuration")
+            time.sleep(2)
             
             # Reload systemd daemon
             subprocess.run(['systemctl', 'daemon-reload'], check=True)
             logger.info("Reloaded systemd daemon")
+            time.sleep(2)
             
             # Enable and start the service
             subprocess.run(['systemctl', 'enable', 'pigattserver'], check=True)
             logger.info("Enabled pigattserver service")
+            time.sleep(2)
             
             subprocess.run(['systemctl', 'start', 'pigattserver'], check=True)
             logger.info("Started pigattserver service")

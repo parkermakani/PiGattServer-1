@@ -1,0 +1,20 @@
+parkerbata@sitr:~/PiGattServer-1 $ sudo journalctl -u pigattserver -f
+Oct 25 00:12:47 sitr python3[2627]: 2024-10-25 00:12:47,484 - ble_server - INFO - Successfully acquired D-Bus service name: org.bluez.pigattserver
+Oct 25 00:12:47 sitr python3[2627]: 2024-10-25 00:12:47,490 - ble_server - INFO - Resetting Bluetooth adapter
+Oct 25 00:12:47 sitr python3[2627]: 2024-10-25 00:12:47,490 - ble_server - INFO - Resetting Bluetooth adapter...
+Oct 25 00:12:48 sitr python3[2627]: 2024-10-25 00:12:48,646 - ble_server - INFO - Bluetooth adapter reset successfully
+Oct 25 00:12:49 sitr python3[2627]: 2024-10-25 00:12:49,647 - ble_server - INFO - D-Bus setup completed successfully
+Oct 25 00:12:49 sitr python3[2627]: 2024-10-25 00:12:49,777 - ble_server - INFO - BlueZ configuration updated successfully
+Oct 25 00:12:49 sitr systemd[1]: Stopping pigattserver.service - Raspberry Pi BLE GATT Server...
+Oct 25 00:12:49 sitr systemd[1]: pigattserver.service: Deactivated successfully.
+Oct 25 00:12:49 sitr systemd[1]: Stopped pigattserver.service - Raspberry Pi BLE GATT Server.
+Oct 25 00:12:50 sitr systemd[1]: Started pigattserver.service - Raspberry Pi BLE GATT Server.
+Oct 25 00:12:52 sitr python3[2744]: 2024-10-25 00:12:52,917 - ble_server - INFO - Using dbus-python implementation
+Oct 25 00:12:53 sitr python3[2744]: 2024-10-25 00:12:53,586 - ble_server - INFO - Bluetooth service is already active.
+Oct 25 00:12:53 sitr python3[2744]: 2024-10-25 00:12:53,591 - ble_server - INFO - Attempting to acquire D-Bus service name: org.bluez.pigattserver
+Oct 25 00:12:53 sitr python3[2744]: 2024-10-25 00:12:53,594 - ble_server - INFO - Successfully acquired D-Bus service name: org.bluez.pigattserver
+Oct 25 00:12:53 sitr python3[2744]: 2024-10-25 00:12:53,596 - ble_server - INFO - Resetting Bluetooth adapter
+Oct 25 00:12:53 sitr python3[2744]: 2024-10-25 00:12:53,597 - ble_server - INFO - Resetting Bluetooth adapter...
+Oct 25 00:12:54 sitr python3[2744]: 2024-10-25 00:12:54,753 - ble_server - INFO - Bluetooth adapter reset successfully
+Oct 25 00:12:55 sitr python3[2744]: 2024-10-25 00:12:55,754 - ble_server - INFO - D-Bus setup completed successfully
+Oct 25 00:12:55 sitr python3[2744]: 2024-10-25 00:12:55,779 - ble_server - INFO - BlueZ configuration updated successfully

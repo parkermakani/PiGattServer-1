@@ -11,6 +11,8 @@ import threading
 import json
 import subprocess
 from functools import wraps
+import signal
+import sys
 
 # Import mock D-Bus for development mode
 if "REPL_ID" in os.environ:
@@ -30,14 +32,10 @@ GATT_SERVICE_IFACE = 'org.bluez.GattService1'
 GATT_CHRC_IFACE = 'org.bluez.GattCharacteristic1'
 LE_ADVERTISEMENT_IFACE = 'org.bluez.LEAdvertisement1'
 
-# Updated D-Bus service name and base path
 DBUS_SERVICE_NAME = 'org.bluez.pigattserver'
 DBUS_BASE_PATH = '/org/bluez/pigattserver'
 
 class Advertisement(dbus.service.Object):
-    """
-    LEAdvertisement implementation using D-Bus.
-    """
     def __init__(self, bus, index, advertising_type):
         logger.debug(f"Initializing Advertisement with index {index} and type {advertising_type}")
         self.path = f'{DBUS_BASE_PATH}/advertisement{index}'
@@ -58,7 +56,6 @@ class Advertisement(dbus.service.Object):
         logger.debug(f"Advertisement created at path {self.path}")
 
     def get_properties(self):
-        """Return the advertisement properties dictionary."""
         logger.debug(f"Getting properties for advertisement at {self.path}")
         properties = {
             LE_ADVERTISEMENT_IFACE: {
@@ -74,14 +71,12 @@ class Advertisement(dbus.service.Object):
                          in_signature='',
                          out_signature='')
     def Release(self):
-        """Release the advertisement."""
         logger.info(f'Released advertisement at {self.path}')
 
     @dbus.service.method(DBUS_PROP_IFACE,
                          in_signature='s',
                          out_signature='a{sv}')
     def GetAll(self, interface):
-        """Get all properties for the specified interface."""
         logger.debug(f"GetAll called for interface {interface} on advertisement {self.path}")
         if interface != LE_ADVERTISEMENT_IFACE:
             logger.error(f"Unknown interface requested: {interface}")
@@ -102,10 +97,20 @@ class BLEGATTServer:
         self.gatt_manager = None
         self.ad_manager = None
         self.dbus_service_name = None
+        self.shutdown_event = threading.Event()
+        
+        signal.signal(signal.SIGTERM, self._handle_shutdown)
+        signal.signal(signal.SIGINT, self._handle_shutdown)
+        
         self._setup_dbus()
 
+    def _handle_shutdown(self, signum, frame):
+        logger.info(f"Received signal {signum}, initiating shutdown...")
+        self.shutdown_event.set()
+        if self.mainloop and self.mainloop.is_running():
+            self.mainloop.quit()
+
     def _setup_dbus(self):
-        """Initialize D-Bus and BlueZ interfaces."""
         logger.debug("Setting up D-Bus for BLEGATTServer")
         try:
             if self.is_development:
@@ -113,17 +118,21 @@ class BLEGATTServer:
                 self.bus = MockMessageBus()
                 return True
 
-            # Ensure that bluetoothd is running
-            logger.debug("Ensuring bluetoothd is running")
-            self.ensure_bluetoothd_running()
+            max_retries = 5
+            retry_delay = 2
+            for retry in range(max_retries):
+                try:
+                    dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+                    self.bus = dbus.SystemBus()
+                    self.mainloop = GLib.MainLoop()
+                    break
+                except dbus.exceptions.DBusException as e:
+                    if retry < max_retries - 1:
+                        logger.warning(f"D-Bus not ready, retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                    else:
+                        raise
 
-            # Initialize D-Bus mainloop
-            logger.debug("Initializing D-Bus mainloop and SystemBus")
-            dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
-            self.bus = dbus.SystemBus()
-            self.mainloop = GLib.MainLoop()
-
-            # Request D-Bus service name
             logger.info(f"Attempting to acquire D-Bus service name: {DBUS_SERVICE_NAME}")
             self.dbus_service_name = dbus.service.BusName(
                 DBUS_SERVICE_NAME,
@@ -132,20 +141,13 @@ class BLEGATTServer:
             )
             logger.info(f"Successfully acquired D-Bus service name: {DBUS_SERVICE_NAME}")
 
-            # Initialize adapter and properties interface
-            logger.debug("Getting Bluetooth adapter object")
             adapter_obj = self.bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0')
-
-            logger.debug("Creating Adapter1 and Properties interfaces")
             self.adapter = dbus.Interface(adapter_obj, 'org.bluez.Adapter1')
             self.adapter_props = dbus.Interface(adapter_obj, DBUS_PROP_IFACE)
 
-            # Initialize GattManager1 and LEAdvertisingManager1 interfaces
-            logger.debug("Creating GattManager1 and LEAdvertisingManager1 interfaces")
             self.gatt_manager = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
             self.ad_manager = dbus.Interface(adapter_obj, LE_ADVERTISING_MANAGER_IFACE)
 
-            # Reset adapter
             logger.info("Resetting Bluetooth adapter")
             self.reset_adapter()
             logger.info("D-Bus setup completed successfully")
@@ -162,9 +164,7 @@ class BLEGATTServer:
             logger.error(f"Failed to setup D-Bus due to unexpected exception: {str(e)}", exc_info=True)
             return False
 
-
     def _release_existing_service(self):
-        """Attempt to release an existing D-Bus service."""
         logger.debug("Releasing existing D-Bus service")
         try:
             subprocess.run(['systemctl', 'restart', 'bluetooth'], check=True)
@@ -174,7 +174,6 @@ class BLEGATTServer:
             logger.error(f"Failed to release existing service: {str(e)}")
 
     def ensure_bluetoothd_running(self):
-        """Ensure that bluetoothd service is running and restart if necessary."""
         logger.debug("Ensuring bluetoothd service is running")
         try:
             result = subprocess.run(['systemctl', 'is-active', 'bluetooth'], capture_output=True, text=True)
@@ -188,7 +187,6 @@ class BLEGATTServer:
             logger.error(f"Error while checking or starting bluetoothd: {str(e)}")
 
     def reset_adapter(self):
-        """Reset Bluetooth adapter with retry mechanism."""
         logger.debug("Resetting Bluetooth adapter")
         if self.is_development:
             logger.info("Development mode: Simulating adapter reset")
@@ -200,7 +198,7 @@ class BLEGATTServer:
             time.sleep(1)
             self.adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
             logger.info("Bluetooth adapter reset successfully")
-            time.sleep(1)  # Allow adapter to stabilize
+            time.sleep(1)
             return True
         except dbus.exceptions.DBusException as e:
             if "Busy" in str(e):
@@ -210,7 +208,6 @@ class BLEGATTServer:
             return False
 
     def _force_reset_adapter(self):
-        """Force reset Bluetooth adapter by restarting services."""
         logger.debug("Performing force reset of Bluetooth adapter")
         try:
             services = ['bluetooth', 'bluetooth-mesh', 'bluealsa']
@@ -228,7 +225,6 @@ class BLEGATTServer:
             return False
 
     def register_advertisement(self):
-        """Register advertisement with LEAdvertisingManager1."""
         logger.debug("Registering advertisement")
         try:
             if self.is_development:
@@ -251,7 +247,6 @@ class BLEGATTServer:
             return False
 
     def _cleanup_advertisement(self):
-        """Clean up advertisement registration."""
         logger.debug("Cleaning up advertisement")
         try:
             if hasattr(self, 'ad_manager') and self.advertisement:
@@ -261,14 +256,12 @@ class BLEGATTServer:
             logger.error(f"Failed to unregister advertisement: {str(e)}")
 
     def register_service(self):
-        """Register GATT service and characteristics with improved reliability."""
         logger.debug("Registering GATT service")
         try:
             if self.is_development:
                 logger.info("Development mode: Simulating service registration")
                 return True
 
-            # Create and register the service
             self.service = GattService(self.bus, 0, ServiceDefinitions.CUSTOM_SERVICE_UUID)
             characteristics = [
                 ('temperature', CharacteristicProperties.TEMPERATURE),
@@ -288,7 +281,6 @@ class BLEGATTServer:
                 self.service.add_characteristic(char)
                 logger.info(f"Registered characteristic: {name} at {char.path}")
 
-            # Register application with retry
             max_retries = 3
             retry_count = 0
             while retry_count < max_retries:
@@ -321,7 +313,6 @@ class BLEGATTServer:
             return False
 
     def _cleanup_service(self):
-        """Clean up service registration."""
         logger.debug("Cleaning up GATT service")
         try:
             self._cleanup_advertisement()
@@ -335,7 +326,6 @@ class BLEGATTServer:
             logger.error(f"Failed to unregister application: {str(e)}")
 
     def run(self):
-        """Start the GATT server and run the main loop."""
         logger.debug("Starting BLEGATTServer run method")
         try:
             if not check_bluetooth_status():
@@ -358,7 +348,6 @@ class BLEGATTServer:
             self.cleanup()
 
     def cleanup(self):
-        """Perform cleanup operations."""
         logger.debug("Performing cleanup of BLEGATTServer")
         try:
             self._cleanup_service()
@@ -375,5 +364,9 @@ class BLEGATTServer:
             logger.info("GATT server stopped")
 
 if __name__ == "__main__":
-    server = BLEGATTServer()
-    server.run()
+    try:
+        server = BLEGATTServer()
+        server.run()
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        sys.exit(1)
