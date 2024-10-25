@@ -66,6 +66,7 @@ class Service:
         self.primary = primary
         self.characteristics = []
         self.path = None
+        self._logger = logging.getLogger('ble_server')  # Add logger here
 
     def get_path(self):
         return dbus.ObjectPath(self.path)
@@ -85,43 +86,10 @@ class Service:
         return [char.get_path() for char in self.characteristics]
 
     def add_characteristic(self, characteristic):
+        self._logger.debug(f'Adding characteristic to service: {self.path}')
         self.characteristics.append(characteristic)
         characteristic.service = self
-
-class DBusCharacteristic(dbus.service.Object, Characteristic):
-    """D-Bus enabled characteristic"""
-    def __init__(self, bus, index, uuid, flags, service):
-        # Initialize the base characteristic first
-        Characteristic.__init__(self, uuid, flags)
-
-        # Set the path using the service's path
-        self.service = service
-        self.path = f"{service.get_path()}/char{index}"
-        logger.debug(f'Initializing characteristic at path: {self.path}')
-
-        # Initialize the D-Bus object
-        dbus.service.Object.__init__(self, bus, self.path)
-
-    @dbus.service.method(DBUS_PROP_IFACE,
-                        in_signature='s',
-                        out_signature='a{sv}')
-    def GetAll(self, interface):
-        if interface != GATT_CHRC_IFACE:
-            raise InvalidArgsException()
-        return self.get_properties()[GATT_CHRC_IFACE]
-
-    @dbus.service.method(GATT_CHRC_IFACE,
-                        in_signature='ay',
-                        out_signature='ay')
-    def ReadValue(self, options):
-        logger.debug('ReadValue called')
-        return self.value
-
-    @dbus.service.method(GATT_CHRC_IFACE,
-                        in_signature='aya{sv}')
-    def WriteValue(self, value, options):
-        logger.debug(f'WriteValue called with: {bytes(value)}')
-        self.value = value
+        self._logger.debug(f'Characteristic added with path: {characteristic.get_path()}')
 
 class DBusService(dbus.service.Object, Service):
     """D-Bus enabled service"""
@@ -144,11 +112,48 @@ class DBusService(dbus.service.Object, Service):
             raise InvalidArgsException()
         return self.get_properties()[GATT_SERVICE_IFACE]
 
+class DBusCharacteristic(dbus.service.Object, Characteristic):
+    """D-Bus enabled characteristic"""
+    def __init__(self, bus, index, uuid, flags, service):
+        # Initialize the base characteristic first
+        Characteristic.__init__(self, uuid, flags)
+
+        # Set the path using the service's path
+        self.service = service
+        self.path = f"{service.get_path()}/char{index}"
+
+        # Initialize the D-Bus object
+        dbus.service.Object.__init__(self, bus, self.path)
+
+        logger.debug(f'Initializing characteristic at path: {self.path}')
+
+    @dbus.service.method(DBUS_PROP_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        if interface != GATT_CHRC_IFACE:
+            raise InvalidArgsException()
+        return self.get_properties()[GATT_CHRC_IFACE]
+
+    @dbus.service.method(GATT_CHRC_IFACE,
+                        in_signature='ay',
+                        out_signature='ay')
+    def ReadValue(self, options):
+        logger.debug('ReadValue called')
+        return self.value
+
+    @dbus.service.method(GATT_CHRC_IFACE,
+                        in_signature='aya{sv}')
+    def WriteValue(self, value, options):
+        logger.debug(f'WriteValue called with: {bytes(value)}')
+        self.value = value
+
 class SITRCharacteristic(DBusCharacteristic):
     """SITR specific characteristic"""
     SITR_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1'
 
     def __init__(self, bus, index, service):
+        logger.debug(f'Creating SITR characteristic for service: {service.get_path()}')
         super().__init__(bus, index, self.SITR_CHARACTERISTIC_UUID, ['read', 'write'], service)
 
 
@@ -157,6 +162,7 @@ class SITRService(DBusService):
     SITR_UUID = '12345678-1234-5678-1234-56789abcdef0'
 
     def __init__(self, bus, index):
+        logger.debug('Creating SITR service')
         super().__init__(bus, index, self.SITR_UUID, True)
         logger.debug(f'Creating SITR characteristic for service at {self.get_path()}')
         self.add_characteristic(SITRCharacteristic(bus, 0, self))
