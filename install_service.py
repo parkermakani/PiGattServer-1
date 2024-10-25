@@ -33,6 +33,18 @@ def install_service():
         if os.path.exists(service_file):
             shutil.copy2(service_file, os.path.join(systemd_dir, service_file))
             logger.info(f"Installed {service_file} to {systemd_dir}")
+
+        # Install D-Bus configuration file
+        dbus_conf_file = 'org.bluez.pigattserver.conf'
+        dbus_conf_dir = '/etc/dbus-1/system.d'
+        if os.path.exists(dbus_conf_file):
+            os.makedirs(dbus_conf_dir, exist_ok=True)
+            shutil.copy2(dbus_conf_file, os.path.join(dbus_conf_dir, dbus_conf_file))
+            logger.info(f"Installed {dbus_conf_file} to {dbus_conf_dir}")
+            
+            # Reload D-Bus configuration
+            subprocess.run(['systemctl', 'reload', 'dbus'], check=True)
+            logger.info("Reloaded D-Bus configuration")
             
             # Reload systemd daemon
             subprocess.run(['systemctl', 'daemon-reload'], check=True)

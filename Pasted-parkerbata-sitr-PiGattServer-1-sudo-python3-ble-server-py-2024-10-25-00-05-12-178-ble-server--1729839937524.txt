@@ -1,0 +1,40 @@
+parkerbata@sitr:~/PiGattServer-1 $ sudo python3 ble_server.py
+2024-10-25 00:05:12,178 - ble_server - INFO - Using dbus-python implementation
+2024-10-25 00:05:12,221 - ble_server - INFO - Bluetooth service is already active.
+2024-10-25 00:05:12,227 - ble_server - INFO - Attempting to acquire D-Bus service name: org.bluez.pigattserver
+2024-10-25 00:05:12,229 - ble_server - INFO - Successfully acquired D-Bus service name: org.bluez.pigattserver
+2024-10-25 00:05:12,232 - ble_server - INFO - Resetting Bluetooth adapter
+2024-10-25 00:05:12,232 - ble_server - INFO - Resetting Bluetooth adapter...
+2024-10-25 00:05:13,380 - ble_server - INFO - Bluetooth adapter reset successfully
+2024-10-25 00:05:14,381 - ble_server - INFO - D-Bus setup completed successfully
+2024-10-25 00:05:14,387 - ble_server - INFO - BlueZ configuration updated successfully
+2024-10-25 00:05:14,715 - ble_server - INFO - Bluetooth service restarted successfully
+2024-10-25 00:05:14,926 - ble_server - INFO - Added user root to bluetooth group
+2024-10-25 00:05:14,927 - ble_server - INFO - Bluetooth permissions and configuration setup completed successfully
+2024-10-25 00:05:14,978 - ble_server - INFO - Waiting for 10 seconds to allow BlueZ to stabilize...
+2024-10-25 00:05:24,980 - ble_server - INFO - Registered characteristic: temperature at /org/bluez/pigattserver/pigattserver0/char0
+2024-10-25 00:05:24,981 - ble_server - INFO - Registered characteristic: humidity at /org/bluez/pigattserver/pigattserver0/char1
+2024-10-25 00:05:24,981 - ble_server - INFO - Registered characteristic: status at /org/bluez/pigattserver/pigattserver0/char2
+2024-10-25 00:05:24,981 - ble_server - INFO - Registered characteristic: new_char at /org/bluez/pigattserver/pigattserver0/char3
+2024-10-25 00:05:24,985 - ble_server - WARNING - Failed to register service: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files. Retrying (1/3)...
+2024-10-25 00:05:26,988 - ble_server - WARNING - Failed to register service: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files. Retrying (2/3)...
+2024-10-25 00:05:28,992 - ble_server - WARNING - Failed to register service: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files. Retrying (3/3)...
+2024-10-25 00:05:30,992 - ble_server - ERROR - Failed to register service after 3 attempts
+2024-10-25 00:05:30,993 - ble_server - INFO - Unregistering application at /org/bluez/pigattserver
+2024-10-25 00:05:30,996 - ble_server - ERROR - Failed to unregister application: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files
+2024-10-25 00:05:30,997 - ble_server - ERROR - Error during service registration: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files
+Traceback (most recent call last):
+  File "/home/parkerbata/PiGattServer-1/ble_server.py", line 298, in register_service
+    self.gatt_manager.RegisterApplication(
+  File "/usr/lib/python3/dist-packages/dbus/proxies.py", line 141, in __call__
+    return self._connection.call_blocking(self._named_service,
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3/dist-packages/dbus/connection.py", line 634, in call_blocking
+    reply_message = self.send_message_with_reply_and_block(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+dbus.exceptions.DBusException: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files
+2024-10-25 00:05:31,005 - ble_server - ERROR - Unexpected error in run method: Failed to register service
+2024-10-25 00:05:31,006 - ble_server - INFO - Unregistering application at /org/bluez/pigattserver
+2024-10-25 00:05:31,009 - ble_server - ERROR - Failed to unregister application: org.freedesktop.DBus.Error.ServiceUnknown: The name :1.62 was not provided by any .service files
+2024-10-25 00:05:31,013 - ble_server - INFO - Cleanup completed successfully
+2024-10-25 00:05:31,013 - ble_server - INFO - GATT server stopped
