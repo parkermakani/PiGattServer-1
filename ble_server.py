@@ -43,16 +43,36 @@ def setup_logging():
     return logger
 
 class BLEGATTServer(dbus.service.Object):
+    """
+    BLE GATT Server implementation
+    """
+    BLUEZ_SERVICE_NAME = 'org.bluez'
+    GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
+    LE_ADVERTISING_MANAGER_IFACE = 'org.bluez.LEAdvertisingManager1'
+
     def __init__(self, bus, adapter_name, logger):
         self.logger = logger
-        self.path = '/org/bluez/example/service'
-        self.bus = bus
-        self.adapter = adapter_name
+        self.adapter_name = adapter_name
+        self.path = '/org/bluez/example/service'  # Base path for the service
+        self.services = []  # List to keep track of services
+        self.next_index = 0  # For generating unique paths
 
         self.logger.info(f"Initializing BLE GATT Server with adapter: {adapter_name}")
+
+        # Initialize the D-Bus service object
         super().__init__(bus, self.path)
 
         self._setup_dbus()
+
+    def get_path(self):
+        """Return the D-Bus path of the service"""
+        return dbus.ObjectPath(self.path)
+
+    def get_next_path(self):
+        """Generate unique paths for characteristics and services"""
+        path = f"{self.path}/service{self.next_index}"
+        self.next_index += 1
+        return dbus.ObjectPath(path)
 
     def _setup_dbus(self):
         """Initialize D-Bus interface and setup required services"""
@@ -64,10 +84,10 @@ class BLEGATTServer(dbus.service.Object):
             self.logger.debug("Successfully connected to system bus")
 
             # Get the BLE controller
-            adapter_path = f'/org/bluez/{self.adapter}'
+            adapter_path = f'/org/bluez/{self.adapter_name}'
             self.logger.debug(f"Attempting to get adapter at path: {adapter_path}")
 
-            adapter = self.bus.get_object('org.bluez', adapter_path)
+            adapter = self.bus.get_object(self.BLUEZ_SERVICE_NAME, adapter_path)
             adapter_props = dbus.Interface(adapter, 'org.freedesktop.DBus.Properties')
 
             # Power on the adapter if it's not already
@@ -81,10 +101,16 @@ class BLEGATTServer(dbus.service.Object):
 
             # Set up advertisement and GATT manager
             self.logger.debug("Setting up advertisement manager")
-            self.ad_manager = dbus.Interface(adapter, 'org.bluez.LEAdvertisingManager1')
+            self.ad_manager = dbus.Interface(
+                adapter, 
+                self.LE_ADVERTISING_MANAGER_IFACE
+            )
 
             self.logger.debug("Setting up GATT manager")
-            self.service_manager = dbus.Interface(adapter, 'org.bluez.GattManager1')
+            self.service_manager = dbus.Interface(
+                adapter,
+                self.GATT_MANAGER_IFACE
+            )
 
             self.logger.info("D-Bus setup completed successfully")
 
@@ -96,6 +122,14 @@ class BLEGATTServer(dbus.service.Object):
             self.logger.error(f"Unexpected error during D-Bus setup: {str(e)}")
             self.logger.debug("Exception details:", exc_info=True)
             raise
+
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                        in_signature='s',
+                        out_signature='a{sv}')
+    def GetAll(self, interface):
+        """Get all properties for the specified interface"""
+        self.logger.debug(f"GetAll called for interface: {interface}")
+        return {}
 
     def start(self):
         """Start the GATT server"""
