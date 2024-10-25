@@ -36,6 +36,20 @@ DBUS_SERVICE_NAME = 'org.bluez.pigattserver'
 DBUS_BASE_PATH = '/org/bluez/pigattserver'
 
 class BLEGATTServer:
+    def _setup_dbus(self):
+        # Initialize the system bus for DBus communication
+        self.bus = dbus.SystemBus()
+
+        # Get the adapter object for BLE functionality
+        adapter_path = '/org/bluez/hci0'
+        self.adapter = self.bus.get_object('org.bluez', adapter_path)
+
+        # Interface for interacting with the adapter properties
+        self.adapter_props = dbus.Interface(self.adapter, 'org.freedesktop.DBus.Properties')
+
+        # Ensure the adapter is powered on
+        self.adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
+    
     def __init__(self):
         logger.debug("Initializing BLEGATTServer")
         self.is_development = "REPL_ID" in os.environ
