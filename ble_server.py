@@ -36,39 +36,59 @@ DBUS_SERVICE_NAME = 'org.bluez.pigattserver'
 DBUS_BASE_PATH = '/org/bluez/pigattserver'
 
 class BLEGATTServer:
-    def _setup_dbus(self):
-        # Initialize the system bus for DBus communication
-        self.bus = dbus.SystemBus()
+    def __init__(self, bus, adapter_name):
+        self.path = '/org/bluez/example/service'
+        self.bus = bus
+        self.adapter = adapter_name
+        super().__init__(bus, self.path)
 
-        # Get the adapter object for BLE functionality
-        adapter_path = '/org/bluez/hci0'
-        self.adapter = self.bus.get_object('org.bluez', adapter_path)
-
-        # Interface for interacting with the adapter properties
-        self.adapter_props = dbus.Interface(self.adapter, 'org.freedesktop.DBus.Properties')
-
-        # Ensure the adapter is powered on
-        self.adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
-    
-    def __init__(self):
-        logger.debug("Initializing BLEGATTServer")
-        self.is_development = "REPL_ID" in os.environ
-        self.mainloop = None
-        self.bus = None
-        self.service = None
-        self.advertisement = None
-        self.gatt_manager = None
-        self.ad_manager = None
-        self.dbus_service_name = None
-        self.shutdown_event = threading.Event()
-        self.cleanup_lock = threading.Lock()
-        self.cleanup_complete = threading.Event()
-        
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        
         self._setup_dbus()
 
+    def _setup_dbus(self):
+        """Initialize D-Bus interface and setup required services"""
+        try:
+            # Get the system bus
+            self.bus = dbus.SystemBus()
+
+            # Get the BLE controller
+            adapter = self.bus.get_object('org.bluez', f'/org/bluez/{self.adapter}')
+            adapter_props = dbus.Interface(adapter, 'org.freedesktop.DBus.Properties')
+
+            # Power on the adapter if it's not already
+            if not adapter_props.Get('org.bluez.Adapter1', 'Powered'):
+                adapter_props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
+
+            # Set up advertisement
+            self.ad_manager = dbus.Interface(adapter, 'org.bluez.LEAdvertisingManager1')
+            self.service_manager = dbus.Interface(adapter, 'org.bluez.GattManager1')
+
+        except dbus.exceptions.DBusException as e:
+            print(f"D-Bus setup failed: {str(e)}")
+            raise
+
+    def start(self):
+        """Start the GATT server"""
+        try:
+            # Register GATT services
+            self.service_manager.RegisterApplication(self.get_path(), {})
+            print("GATT application registered")
+
+            # Start advertising
+            self.ad_manager.RegisterAdvertisement(self.get_path(), {})
+            print("Advertisement registered")
+
+        except dbus.exceptions.DBusException as e:
+            print(f"Failed to start GATT server: {str(e)}")
+            raise
+
+    def stop(self):
+        """Stop the GATT server"""
+        try:
+            self.ad_manager.UnregisterAdvertisement(self.get_path())
+            self.service_manager.UnregisterApplication(self.get_path())
+        except dbus.exceptions.DBusException as e:
+            print(f"Failed to stop GATT server: {str(e)}")
+    
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signals with proper cleanup coordination."""
         if self.shutdown_event.is_set():
