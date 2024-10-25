@@ -89,32 +89,29 @@ class Advertisement(dbus.service.Object):
 
 class Application(dbus.service.Object):
     def __init__(self, bus):
-        self.path = '/org/bluez/example'
+        self.path = '/org/bluez/example/app'
         self.services = []
         dbus.service.Object.__init__(self, bus, self.path)
-
-    def get_path(self):
-        return dbus.ObjectPath(self.path)
 
     def add_service(self, service):
         self.services.append(service)
         self.add_managed_object(service)
 
     def add_managed_object(self, object):
-        dbus.service.Object.__init__(object, object.bus, object.path)
+        # Ensure the object has a valid DBus path
+        dbus.service.Object.__init__(object, self.bus, object.get_path())
 
     @dbus.service.method(DBUS_OM_IFACE, out_signature='a{oa{sa{sv}}}')
     def GetManagedObjects(self):
         response = {}
-
         for service in self.services:
             response[service.get_path()] = service.get_properties()
-            chrcs = service.get_characteristics()
-            for chrc in chrcs:
+            for chrc in service.get_characteristics():
                 response[chrc.get_path()] = chrc.get_properties()
 
         logger.debug(f'GetManagedObjects response: {response}')
         return response
+
 
 class Characteristic(dbus.service.Object):
     def __init__(self, bus, index, uuid, flags, service):
