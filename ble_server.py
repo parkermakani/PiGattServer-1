@@ -40,7 +40,7 @@ class Characteristic:
     def __init__(self, uuid, flags=['read']):
         self.uuid = uuid
         self.flags = flags
-        self.value = []
+        self.value = dbus.Array([], signature='y')  # 'y' indicates a byte array
         self.path = None
         self.service = None
 
@@ -53,7 +53,7 @@ class Characteristic:
                 'Service': self.service.get_path(),
                 'UUID': self.uuid,
                 'Flags': self.flags,
-                'Value': self.value
+                'Value': dbus.Array(self.value, signature='y')
             }
         }
 
