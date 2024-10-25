@@ -251,14 +251,16 @@ def main():
         logger.debug('Registering advertisement...')
         ad_manager.RegisterAdvertisement(
             advertisement.get_path(), {},
-            error_handler=lambda error: logger.error(f'Failed to register advertisement: {str(error)}'))
-        logger.info('Advertisement registered')
+            reply_handler=lambda: logger.info('Advertisement registered'),
+            error_handler=lambda error: logger.error(f'Failed to register advertisement: {str(error)}')
+        )
 
         logger.debug('Registering application...')
         service_manager.RegisterApplication(
             app.get_path(), {},
-            error_handler=lambda error: logger.error(f'Failed to register application: {str(error)}'))
-        logger.info('Application registered')
+            reply_handler=lambda: logger.info('Application registered'),
+            error_handler=lambda error: logger.error(f'Failed to register application: {str(error)}')
+        )
 
         logger.info('GATT server is running. Press Ctrl+C to stop.')
 
